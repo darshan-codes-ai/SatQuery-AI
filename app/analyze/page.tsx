@@ -31,6 +31,13 @@ export default function AnalyzePage() {
   // User's text query
   const [query, setQuery] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResults, setAnalysisResults] = useState({
+  ndvi: 0,
+  ndwi: 0,
+  ndbi: 0,
+  coverage: 0,
+  confidence: 0,
+});
 
   // Upload modal
   const [showUpload, setShowUpload] = useState(false);
@@ -170,6 +177,14 @@ export default function AnalyzePage() {
         text: data.response,
       },
     ]);
+
+    setAnalysisResults({
+      ndvi: data.analysis.indices.ndvi,
+      ndwi: data.analysis.indices.ndwi,
+      ndbi: data.analysis.indices.ndbi,
+      coverage: data.analysis.coverage,
+      confidence: data.confidence,
+    });
 
     setAnalysisStarted(true);
   } catch (error) {
@@ -502,7 +517,7 @@ export default function AnalyzePage() {
               <MetricCard
                 icon={<Activity size={17} />}
                 title="NDVI"
-                value="0.63"
+                value={analysisResults.ndvi.toFixed(2)}
                 subtitle="Vegetation health"
               />
 
@@ -512,7 +527,7 @@ export default function AnalyzePage() {
               <MetricCard
                 icon={<Waves size={17} />}
                 title="NDWI"
-                value="0.21"
+                value={analysisResults.ndwi.toFixed(2)}
                 subtitle="Water presence"
               />
 
@@ -522,7 +537,7 @@ export default function AnalyzePage() {
               <MetricCard
                 icon={<BarChart3 size={17} />}
                 title="NDBI"
-                value="0.38"
+                value={analysisResults.ndbi.toFixed(2)}
                 subtitle="Built-up index"
               />
 
@@ -532,7 +547,7 @@ export default function AnalyzePage() {
               <MetricCard
                 icon={<Eye size={17} />}
                 title="Coverage"
-                value="42.8%"
+                value={`${analysisResults.coverage.toFixed(1)}%`}
                 subtitle="Vegetated area"
               />
 
@@ -966,7 +981,7 @@ export default function AnalyzePage() {
                         mt-1
                       "
                     >
-                      0.63
+                      {analysisResults.ndvi.toFixed(2)}
                     </div>
 
                   </div>
@@ -992,7 +1007,7 @@ export default function AnalyzePage() {
                         mt-1
                       "
                     >
-                      91%
+                      {Math.round(analysisResults.confidence * 100)}%
                     </div>
 
                   </div>
@@ -1019,7 +1034,7 @@ export default function AnalyzePage() {
                     </span>
 
                     <span>
-                      42.8%
+                      
                     </span>
 
                   </div>
@@ -1041,8 +1056,11 @@ export default function AnalyzePage() {
                         rounded-full
                       "
                       style={{
-                        width: "42.8%",
-                      }}
+                        width: `${Math.min(
+                        100,
+                        Math.max(0, analysisResults.coverage)
+                      )}%`,
+                    }}
                     />
 
                   </div>
