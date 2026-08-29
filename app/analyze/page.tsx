@@ -30,6 +30,7 @@ export default function AnalyzePage() {
 
   // User's text query
   const [query, setQuery] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Upload modal
   const [showUpload, setShowUpload] = useState(false);
@@ -129,35 +130,66 @@ export default function AnalyzePage() {
   // RUN AI QUERY
   // =========================================================
 
-  const runQuery = (text: string) => {
-    if (!text.trim()) return;
+  const runQuery = async (text: string) => {
+  if (!text.trim() || isAnalyzing) return;
 
-    // Add user message
+  setMessages((previous) => [
+    ...previous,
+    {
+      role: "user",
+      text: text.trim(),
+    },
+  ]);
+
+  setQuery("");
+  setIsAnalyzing(true);
+
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: text.trim(),
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error || "Analysis failed."
+      );
+    }
+
     setMessages((previous) => [
       ...previous,
       {
-        role: "user",
-        text: text,
+        role: "ai",
+        text: data.response,
       },
     ]);
 
-    // Clear input
-    setQuery("");
+    setAnalysisStarted(true);
+  } catch (error) {
+    console.error(
+      "SatQuery analysis error:",
+      error
+    );
 
-    // Simulated AI response
-    setTimeout(() => {
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "ai",
-          text:
-            "Analysis complete. The selected region shows moderate vegetation health with an estimated NDVI of 0.63. Approximately 42.8% of the analyzed area is classified as vegetated.",
-        },
-      ]);
-
-      setAnalysisStarted(true);
-    }, 700);
-  };
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "ai",
+        text:
+          "I couldn't complete the analysis. Please try again.",
+      },
+    ]);
+  } finally {
+    setIsAnalyzing(false);
+  }
+};
 
   // =========================================================
   // PAGE
@@ -1105,30 +1137,34 @@ export default function AnalyzePage() {
 
               {/* SEND BUTTON */}
 
-              <button
-                onClick={() => runQuery(query)}
-                disabled={!query.trim()}
-                className="
-                  absolute
-                  right-3
-                  bottom-3
-                  w-8
-                  h-8
-                  rounded-lg
-                  bg-cyan-400
-                  text-black
-                  flex
-                  items-center
-                  justify-center
-                  disabled:opacity-30
-                  hover:bg-cyan-300
-                  transition
-                "
-              >
-
-                <Send size={15} />
-
-              </button>
+             <button
+  onClick={() => runQuery(query)}
+  disabled={!query.trim() || isAnalyzing}
+  className="
+    absolute
+    right-3
+    bottom-3
+    w-8
+    h-8
+    rounded-lg
+    bg-cyan-400
+    text-black
+    flex
+    items-center
+    justify-center
+    disabled:opacity-30
+    hover:bg-cyan-300
+    transition
+  "
+>
+  {isAnalyzing ? (
+    <span className="text-xs font-bold animate-pulse">
+      ...
+    </span>
+  ) : (
+    <Send size={15} />
+  )}
+</button>
 
             </div>
 
