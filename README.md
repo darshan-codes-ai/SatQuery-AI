@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🛰️ SatQuery AI
 
-## Getting Started
+### An Interactive Vision-Language Assistant for Multimodal Remote Sensing Image Analysis through Text Queries
 
-First, run the development server:
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=for-the-badge&logo=tailwindcss)](https://tailwindcss.com/)
+[![MapLibre](https://img.shields.io/badge/MapLibre-GL-396CB2?style=for-the-badge)](https://maplibre.org/)
+[![Vercel](https://img.shields.io/badge/Deployed_on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🌍 Overview
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**SatQuery AI** is an AI-powered Vision-Language Assistant designed to make **multimodal remote sensing and satellite image analysis accessible through natural language queries**.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Instead of requiring users to have advanced knowledge of GIS software, remote sensing tools, spectral indices, or image-processing pipelines, SatQuery AI allows users to interact with satellite imagery using simple text queries.
 
-## Learn More
+For example:
 
-To learn more about Next.js, take a look at the following resources:
+> **"Find areas with low vegetation."**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+> **"Identify water bodies in this region."**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+> **"Show urban expansion."**
 
-## Deploy on Vercel
+> **"Analyze vegetation health."**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The system aims to combine:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 🛰️ Satellite imagery
+- 🤖 Vision-Language AI
+- 🗺️ Geospatial visualization
+- 📊 Remote sensing indices
+- 💬 Natural-language interaction
+- 🔍 Explainable analysis
+
+into a single interactive platform.
+
+---
+
+# 🎯 SIH Problem Statement
+
+**Problem ID:** `SIH26167`
+
+**Organization:** Indian Space Research Organisation (ISRO)
+
+**Theme:** Space Technology
+
+**Category:** Software
+
+### Problem Statement
+
+> **SatQuery AI - An Interactive Vision-Language Assistant for Multimodal Remote Sensing Image Analysis through Text Queries**
+
+---
+
+# ❗ Problem We Are Solving
+
+Remote sensing generates enormous amounts of satellite imagery containing valuable information about:
+
+- Agriculture
+- Forests
+- Water resources
+- Urban development
+- Land-use changes
+- Disaster-affected regions
+- Environmental conditions
+
+However, extracting useful information from this data often requires:
+
+- GIS expertise
+- Remote sensing knowledge
+- Image-processing skills
+- Understanding of spectral bands
+- Knowledge of vegetation and water indices
+- Specialized software
+
+This creates a barrier for non-expert users.
+
+### Our goal
+
+Make satellite-image analysis as simple as:
+
+```text
+Upload / Select Satellite Image
+            ↓
+       Ask a Question
+            ↓
+        AI Analysis
+            ↓
+   Visual + Numerical Evidence
+            ↓
+     Natural Language Answer
