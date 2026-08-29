@@ -14,30 +14,72 @@ export default function SatelliteMap() {
   });
 
   useEffect(() => {
-    // Prevent map from being initialized more than once
     if (!mapContainer.current || mapRef.current) {
       return;
     }
 
-    // Create MapLibre map
+    // =====================================================
+    // CREATE MAP
+    // =====================================================
+
     const map = new maplibregl.Map({
       container: mapContainer.current,
 
-      // Demo MapLibre style
-      style: "https://demotiles.maplibre.org/globe.json",
+      // Normal 2D MapLibre map
+      style: "https://demotiles.maplibre.org/style.json",
 
-      // Initial position
       center: [81.3509, 21.1938],
 
-      // Initial zoom
       zoom: 5,
 
-      // Enable globe projection
-      projection: "globe",
+      projection: "mercator",
     });
 
-    // Save map instance
     mapRef.current = map;
+
+    // =====================================================
+    // MAP LOAD
+    // =====================================================
+
+    map.on("load", () => {
+      // ---------------------------------------------------
+      // ADD SATELLITE RASTER SOURCE
+      // ---------------------------------------------------
+
+      if (!map.getSource("satellite-imagery")) {
+        map.addSource("satellite-imagery", {
+          type: "raster",
+
+          tiles: [
+            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg",
+          ],
+
+          tileSize: 256,
+
+          minzoom: 0,
+
+          maxzoom: 19,
+        });
+      }
+
+      // ---------------------------------------------------
+      // ADD SATELLITE RASTER LAYER
+      // ---------------------------------------------------
+
+      if (!map.getLayer("satellite-imagery-layer")) {
+        map.addLayer({
+          id: "satellite-imagery-layer",
+
+          type: "raster",
+
+          source: "satellite-imagery",
+
+          paint: {
+            "raster-opacity": 1,
+          },
+        });
+      }
+    });
 
     // =====================================================
     // NAVIGATION CONTROLS
@@ -81,16 +123,15 @@ export default function SatelliteMap() {
     map.on("click", (event) => {
       const { lng, lat } = event.lngLat;
 
-      // Update coordinates
+      // Update selected coordinates
       setCoordinates({
         lat,
         lng,
       });
 
-      // Remove previous marker
-      const oldMarker = document.querySelector(
-        ".satquery-marker"
-      );
+      // Remove old custom marker
+      const oldMarker =
+        document.querySelector(".satquery-marker");
 
       if (oldMarker) {
         oldMarker.remove();
@@ -107,7 +148,6 @@ export default function SatelliteMap() {
         "satquery-marker";
 
       markerElement.style.width = "18px";
-
       markerElement.style.height = "18px";
 
       markerElement.style.border =
@@ -122,7 +162,7 @@ export default function SatelliteMap() {
       markerElement.style.boxShadow =
         "0 0 18px rgba(34,211,238,0.9)";
 
-      // Add marker to map
+      // Add marker
       new maplibregl.Marker({
         element: markerElement,
       })
@@ -136,26 +176,19 @@ export default function SatelliteMap() {
 
     return () => {
       map.remove();
-
       mapRef.current = null;
     };
   }, []);
 
   return (
     <div className="relative w-full h-full">
-
       {/* ===================================================
           MAP
       =================================================== */}
 
       <div
         ref={mapContainer}
-        className="
-          absolute
-          inset-0
-          w-full
-          h-full
-        "
+        className="absolute inset-0 w-full h-full"
       />
 
       {/* ===================================================
@@ -178,9 +211,7 @@ export default function SatelliteMap() {
           pointer-events-none
         "
       >
-
         <div className="flex items-center gap-2">
-
           <div
             className="
               w-2
@@ -200,7 +231,6 @@ export default function SatelliteMap() {
           >
             MAP ONLINE
           </span>
-
         </div>
 
         <p
@@ -212,9 +242,7 @@ export default function SatelliteMap() {
         >
           Interactive geospatial workspace
         </p>
-
       </div>
-
 
       {/* ===================================================
           SATELLITE INFORMATION
@@ -236,7 +264,6 @@ export default function SatelliteMap() {
           pointer-events-none
         "
       >
-
         <div
           className="
             text-xs
@@ -256,9 +283,7 @@ export default function SatelliteMap() {
         >
           Multispectral • 10m
         </div>
-
       </div>
-
 
       {/* ===================================================
           CENTER TARGET
@@ -275,7 +300,6 @@ export default function SatelliteMap() {
           pointer-events-none
         "
       >
-
         <div
           className="
             w-12
@@ -288,7 +312,6 @@ export default function SatelliteMap() {
             justify-center
           "
         >
-
           <div
             className="
               w-2
@@ -298,11 +321,8 @@ export default function SatelliteMap() {
               shadow-[0_0_15px_rgba(34,211,238,0.9)]
             "
           />
-
         </div>
-
       </div>
-
 
       {/* ===================================================
           SELECTED COORDINATES
@@ -324,7 +344,6 @@ export default function SatelliteMap() {
           pointer-events-none
         "
       >
-
         <div
           className="
             text-[9px]
@@ -344,17 +363,11 @@ export default function SatelliteMap() {
             text-cyan-300
           "
         >
-
           {coordinates.lat.toFixed(4)}° N
-
           {" · "}
-
           {coordinates.lng.toFixed(4)}° E
-
         </div>
-
       </div>
-
     </div>
   );
 }
