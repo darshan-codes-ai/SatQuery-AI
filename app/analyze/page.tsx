@@ -30,6 +30,12 @@ export default function AnalyzePage() {
 
   // User's text query
   const [query, setQuery] = useState("");
+
+  const [selectedCoordinates, setSelectedCoordinates] = useState({
+  lat: 21.1938,
+  lng: 81.3509,
+    }); 
+    
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
   ndvi: 0,
@@ -159,6 +165,10 @@ export default function AnalyzePage() {
       },
       body: JSON.stringify({
         query: text.trim(),
+        coordinates: {
+          lat: selectedCoordinates.lat,
+          lng: selectedCoordinates.lng,
+        },
       }),
     });
 
@@ -492,7 +502,9 @@ export default function AnalyzePage() {
             "
           >
 
-            <SatelliteMap />
+            <SatelliteMap
+              onCoordinatesChange={setSelectedCoordinates}
+            />
 
           </div>
 

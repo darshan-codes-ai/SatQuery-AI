@@ -4,14 +4,27 @@ import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-export default function SatelliteMap() {
+type Coordinates = {
+  lat: number;
+  lng: number;
+};
+
+type SatelliteMapProps = {
+  onCoordinatesChange?: (coordinates: Coordinates) => void;
+};
+
+export default function SatelliteMap({
+  onCoordinatesChange,
+}: SatelliteMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
 
-  const [coordinates, setCoordinates] = useState({
-    lat: 21.1938,
-    lng: 81.3509,
-  });
+  const [coordinates, setCoordinates] =
+    useState<Coordinates>({
+      lat: 21.1938,
+      lng: 81.3509,
+    });
 
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) {
@@ -25,13 +38,16 @@ export default function SatelliteMap() {
     const map = new maplibregl.Map({
       container: mapContainer.current,
 
-      // Normal 2D MapLibre map
+      // Normal 2D MapLibre style
       style: "https://demotiles.maplibre.org/style.json",
 
+      // Initial center
       center: [81.3509, 21.1938],
 
+      // Initial zoom
       zoom: 5,
 
+      // Flat map projection
       projection: "mercator",
     });
 
@@ -82,7 +98,7 @@ export default function SatelliteMap() {
     });
 
     // =====================================================
-    // NAVIGATION CONTROLS
+    // NAVIGATION CONTROL
     // =====================================================
 
     map.addControl(
@@ -100,7 +116,7 @@ export default function SatelliteMap() {
     );
 
     // =====================================================
-    // LOCATION CONTROL
+    // GEOLOCATION CONTROL
     // =====================================================
 
     map.addControl(
@@ -123,23 +139,35 @@ export default function SatelliteMap() {
     map.on("click", (event) => {
       const { lng, lat } = event.lngLat;
 
-      // Update selected coordinates
-      setCoordinates({
+      const newCoordinates: Coordinates = {
         lat,
         lng,
-      });
+      };
 
-      // Remove old custom marker
-      const oldMarker =
-        document.querySelector(".satquery-marker");
+      // ---------------------------------------------------
+      // UPDATE LOCAL STATE
+      // ---------------------------------------------------
 
-      if (oldMarker) {
-        oldMarker.remove();
+      setCoordinates(newCoordinates);
+
+      // ---------------------------------------------------
+      // SEND COORDINATES TO PARENT PAGE
+      // ---------------------------------------------------
+
+      onCoordinatesChange?.(newCoordinates);
+
+      // ---------------------------------------------------
+      // REMOVE PREVIOUS MARKER
+      // ---------------------------------------------------
+
+      if (markerRef.current) {
+        markerRef.current.remove();
+        markerRef.current = null;
       }
 
-      // ===================================================
+      // ---------------------------------------------------
       // CREATE CUSTOM MARKER
-      // ===================================================
+      // ---------------------------------------------------
 
       const markerElement =
         document.createElement("div");
@@ -149,25 +177,25 @@ export default function SatelliteMap() {
 
       markerElement.style.width = "18px";
       markerElement.style.height = "18px";
-
       markerElement.style.border =
         "2px solid #22d3ee";
-
       markerElement.style.borderRadius =
         "50%";
-
       markerElement.style.backgroundColor =
         "#06131f";
-
       markerElement.style.boxShadow =
         "0 0 18px rgba(34,211,238,0.9)";
 
-      // Add marker
-      new maplibregl.Marker({
-        element: markerElement,
-      })
-        .setLngLat([lng, lat])
-        .addTo(map);
+      // ---------------------------------------------------
+      // ADD MARKER
+      // ---------------------------------------------------
+
+      markerRef.current =
+        new maplibregl.Marker({
+          element: markerElement,
+        })
+          .setLngLat([lng, lat])
+          .addTo(map);
     });
 
     // =====================================================
@@ -175,10 +203,16 @@ export default function SatelliteMap() {
     // =====================================================
 
     return () => {
+      if (markerRef.current) {
+        markerRef.current.remove();
+        markerRef.current = null;
+      }
+
       map.remove();
+
       mapRef.current = null;
     };
-  }, []);
+  }, [onCoordinatesChange]);
 
   return (
     <div className="relative w-full h-full">
@@ -188,7 +222,12 @@ export default function SatelliteMap() {
 
       <div
         ref={mapContainer}
-        className="absolute inset-0 w-full h-full"
+        className="
+          absolute
+          inset-0
+          w-full
+          h-full
+        "
       />
 
       {/* ===================================================
