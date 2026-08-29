@@ -5,7 +5,9 @@ export type AnalysisType =
   | "change"
   | "general";
 
-export function detectAnalysisType(query: string): AnalysisType {
+export function detectAnalysisType(
+  query: string
+): AnalysisType {
   const text = query.toLowerCase();
 
   if (
