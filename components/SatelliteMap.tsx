@@ -22,8 +22,8 @@ export default function SatelliteMap({
 
   const [coordinates, setCoordinates] =
     useState<Coordinates>({
-      lat: 21.1938,
-      lng: 81.3509,
+      lat: 20,
+      lng: 0,
     });
 
   useEffect(() => {
@@ -31,74 +31,61 @@ export default function SatelliteMap({
       return;
     }
 
-    // =====================================================
-    // CREATE MAP
-    // =====================================================
-
     const map = new maplibregl.Map({
       container: mapContainer.current,
 
-      // Normal 2D MapLibre style
-      style: "https://demotiles.maplibre.org/style.json",
+      // Reliable global 2D basemap
+      style: {
+        version: 8,
 
-      // Initial center
-      center: [81.3509, 21.1938],
+        sources: {
+          osm: {
+            type: "raster",
 
-      // Initial zoom
-      zoom: 5,
+            tiles: [
+              "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            ],
 
-      // Flat map projection
+            tileSize: 256,
+
+            minzoom: 0,
+
+            maxzoom: 19,
+
+            attribution:
+              "© OpenStreetMap contributors",
+          },
+        },
+
+        layers: [
+          {
+            id: "osm-base",
+
+            type: "raster",
+
+            source: "osm",
+          },
+        ],
+      },
+
+      // Start with the whole Earth visible
+      center: [0, 20],
+
+      zoom: 1.5,
+
+      minZoom: 1,
+
+      maxZoom: 19,
+
       projection: "mercator",
+
+      renderWorldCopies: true,
     });
 
     mapRef.current = map;
 
     // =====================================================
-    // MAP LOAD
-    // =====================================================
-
-    map.on("load", () => {
-      // ---------------------------------------------------
-      // ADD SATELLITE RASTER SOURCE
-      // ---------------------------------------------------
-
-      if (!map.getSource("satellite-imagery")) {
-        map.addSource("satellite-imagery", {
-          type: "raster",
-
-          tiles: [
-            "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg",
-          ],
-
-          tileSize: 256,
-
-          minzoom: 0,
-
-          maxzoom: 19,
-        });
-      }
-
-      // ---------------------------------------------------
-      // ADD SATELLITE RASTER LAYER
-      // ---------------------------------------------------
-
-      if (!map.getLayer("satellite-imagery-layer")) {
-        map.addLayer({
-          id: "satellite-imagery-layer",
-
-          type: "raster",
-
-          source: "satellite-imagery",
-
-          paint: {
-            "raster-opacity": 1,
-          },
-        });
-      }
-    });
-
-    // =====================================================
-    // NAVIGATION CONTROL
+    // NAVIGATION CONTROLS
     // =====================================================
 
     map.addControl(
@@ -106,18 +93,10 @@ export default function SatelliteMap({
       "top-right"
     );
 
-    // =====================================================
-    // FULLSCREEN CONTROL
-    // =====================================================
-
     map.addControl(
       new maplibregl.FullscreenControl(),
       "top-right"
     );
-
-    // =====================================================
-    // GEOLOCATION CONTROL
-    // =====================================================
 
     map.addControl(
       new maplibregl.GeolocateControl({
@@ -125,12 +104,30 @@ export default function SatelliteMap({
           enableHighAccuracy: true,
         },
 
-        trackUserLocation: true,
+        trackUserLocation: false,
 
-        showUserHeading: true,
+        showUserHeading: false,
       }),
       "top-right"
     );
+
+    // =====================================================
+    // MAP LOAD
+    // =====================================================
+
+    map.on("load", () => {
+      // Start globally.
+      map.fitBounds(
+        [
+          [-179, -60],
+          [179, 80],
+        ],
+        {
+          padding: 20,
+          duration: 0,
+        }
+      );
+    });
 
     // =====================================================
     // MAP CLICK
@@ -144,36 +141,20 @@ export default function SatelliteMap({
         lng,
       };
 
-      // ---------------------------------------------------
-      // UPDATE LOCAL STATE
-      // ---------------------------------------------------
-
       setCoordinates(newCoordinates);
 
-      // ---------------------------------------------------
-      // SEND COORDINATES TO PARENT PAGE
-      // ---------------------------------------------------
+      onCoordinatesChange?.(
+        newCoordinates
+      );
 
-      onCoordinatesChange?.(newCoordinates);
-
-      // ---------------------------------------------------
-      // REMOVE PREVIOUS MARKER
-      // ---------------------------------------------------
-
+      // Remove previous marker
       if (markerRef.current) {
         markerRef.current.remove();
-        markerRef.current = null;
       }
 
-      // ---------------------------------------------------
-      // CREATE CUSTOM MARKER
-      // ---------------------------------------------------
-
+      // Create selected-location marker
       const markerElement =
         document.createElement("div");
-
-      markerElement.className =
-        "satquery-marker";
 
       markerElement.style.width = "18px";
       markerElement.style.height = "18px";
@@ -181,14 +162,12 @@ export default function SatelliteMap({
         "2px solid #22d3ee";
       markerElement.style.borderRadius =
         "50%";
-      markerElement.style.backgroundColor =
+      markerElement.style.background =
         "#06131f";
       markerElement.style.boxShadow =
         "0 0 18px rgba(34,211,238,0.9)";
-
-      // ---------------------------------------------------
-      // ADD MARKER
-      // ---------------------------------------------------
+      markerElement.style.cursor =
+        "pointer";
 
       markerRef.current =
         new maplibregl.Marker({
@@ -216,23 +195,14 @@ export default function SatelliteMap({
 
   return (
     <div className="relative w-full h-full">
-      {/* ===================================================
-          MAP
-      =================================================== */}
+      {/* MAP */}
 
       <div
         ref={mapContainer}
-        className="
-          absolute
-          inset-0
-          w-full
-          h-full
-        "
+        className="absolute inset-0 w-full h-full"
       />
 
-      {/* ===================================================
-          MAP ONLINE STATUS
-      =================================================== */}
+      {/* MAP STATUS */}
 
       <div
         className="
@@ -279,13 +249,11 @@ export default function SatelliteMap({
             mt-1
           "
         >
-          Interactive geospatial workspace
+          Global geospatial workspace
         </p>
       </div>
 
-      {/* ===================================================
-          SATELLITE INFORMATION
-      =================================================== */}
+      {/* SATELLITE INFO */}
 
       <div
         className="
@@ -310,7 +278,7 @@ export default function SatelliteMap({
             text-white
           "
         >
-          Sentinel-2
+          Earth
         </div>
 
         <div
@@ -320,13 +288,11 @@ export default function SatelliteMap({
             mt-1
           "
         >
-          Multispectral • 10m
+          Global 2D Map
         </div>
       </div>
 
-      {/* ===================================================
-          CENTER TARGET
-      =================================================== */}
+      {/* CENTER TARGET */}
 
       <div
         className="
@@ -363,9 +329,7 @@ export default function SatelliteMap({
         </div>
       </div>
 
-      {/* ===================================================
-          SELECTED COORDINATES
-      =================================================== */}
+      {/* SELECTED COORDINATES */}
 
       <div
         className="
@@ -406,6 +370,29 @@ export default function SatelliteMap({
           {" · "}
           {coordinates.lng.toFixed(4)}° E
         </div>
+      </div>
+
+      {/* MAP INSTRUCTION */}
+
+      <div
+        className="
+          absolute
+          bottom-4
+          right-4
+          z-10
+          rounded-lg
+          border
+          border-white/10
+          bg-black/65
+          backdrop-blur-md
+          px-3
+          py-2
+          text-[10px]
+          text-gray-400
+          pointer-events-none
+        "
+      >
+        Click anywhere to select a location
       </div>
     </div>
   );
