@@ -31,10 +31,25 @@ export default function AnalyzePage() {
   // User's text query
   const [query, setQuery] = useState("");
 
+  type SelectionGeometry =
+    | {
+        type: "Point";
+        coordinates: [number, number];
+      }
+    | {
+        type: "Polygon";
+        coordinates: [number, number][][];
+      };
+
   const [selectedCoordinates, setSelectedCoordinates] = useState({
   lat: 21.1938,
   lng: 81.3509,
     }); 
+
+  const [selection, setSelection] = useState<SelectionGeometry>({
+    type: "Point",
+    coordinates: [81.3509, 21.1938],
+  });
     
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
@@ -169,6 +184,7 @@ export default function AnalyzePage() {
           lat: selectedCoordinates.lat,
           lng: selectedCoordinates.lng,
         },
+        selection,
       }),
     });
 
@@ -504,6 +520,7 @@ export default function AnalyzePage() {
 
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
+              onSelectionChange={setSelection}
             />
 
           </div>
@@ -560,7 +577,7 @@ export default function AnalyzePage() {
                 icon={<Eye size={17} />}
                 title="Coverage"
                 value={`${analysisResults.coverage.toFixed(1)}%`}
-                subtitle="Vegetated area"
+                subtitle="Valid satellite data"
               />
 
             </div>
