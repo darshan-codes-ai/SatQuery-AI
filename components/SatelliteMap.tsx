@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -26,6 +26,12 @@ type SatelliteMapProps = {
   onSelectionChange?: (selection: SelectionGeometry) => void;
 };
 
+type SearchResult = {
+  display_name: string;
+  lat: string;
+  lon: string;
+};
+
 const SELECTION_SOURCE = "satquery-selection";
 const SELECTION_FILL = "satquery-selection-fill";
 const SELECTION_LINE = "satquery-selection-line";
@@ -34,7 +40,29 @@ const SELECTION_POINTS = "satquery-selection-points";
 type MapHelpers = maplibregl.Map & {
   __satqueryFinishPolygon?: () => void;
   __satqueryClearSelection?: () => void;
+  __satqueryGoToLocation?: (lng: number, lat: number) => void;
 };
+
+
+function SearchIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-cyan-400"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
 
 export default function SatelliteMap({
   onCoordinatesChange,
@@ -56,6 +84,11 @@ export default function SatelliteMap({
   });
   const [polygonCount, setPolygonCount] = useState(0);
   const [hasSelection, setHasSelection] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   useEffect(() => {
     onCoordinatesChangeRef.current = onCoordinatesChange;
@@ -383,6 +416,30 @@ export default function SatelliteMap({
       });
     };
 
+    helpers.__satqueryGoToLocation = (lng: number, lat: number) => {
+      const next = { lat, lng };
+
+      map.flyTo({
+        center: [lng, lat],
+        zoom: 12,
+        duration: 1400,
+        essential: true,
+      });
+
+      emitCoordinates(lng, lat);
+      createPointMarker(lng, lat);
+      setSelectionData({
+        type: "Point",
+        coordinates: [lng, lat],
+      });
+
+      rectangleStartRef.current = null;
+      polygonPointsRef.current = [];
+      setPolygonCount(0);
+
+      setSelectionMode("point");
+    };
+
     return () => {
       if (markerRef.current) {
         markerRef.current.remove();
@@ -393,6 +450,78 @@ export default function SatelliteMap({
       mapRef.current = null;
     };
   }, []);
+
+  const handleSearch = async (event?: FormEvent) => {
+    event?.preventDefault();
+
+    const query = searchQuery.trim();
+
+    if (!query || isSearching) return;
+
+    setIsSearching(true);
+    setSearchError("");
+    setSearchResults([]);
+
+    try {
+      const response = await fetch(
+        `/api/geocode?q=${encodeURIComponent(query)}`,
+        { cache: "no-store" }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error || "Location search failed."
+        );
+      }
+
+      const results = Array.isArray(data.results)
+        ? (data.results as SearchResult[])
+        : [];
+
+      if (!results.length) {
+        setSearchError("No matching place was found.");
+        return;
+      }
+
+      setSearchResults(results);
+
+      const first = results[0];
+      const lat = Number(first.lat);
+      const lng = Number(first.lon);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new Error("The geocoder returned invalid coordinates.");
+      }
+
+      const map = mapRef.current as MapHelpers | null;
+      map?.__satqueryGoToLocation?.(lng, lat);
+    } catch (error) {
+      console.error("SatQuery location search error:", error);
+      setSearchError(
+        error instanceof Error
+          ? error.message
+          : "Location search failed."
+      );
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const chooseSearchResult = (result: SearchResult) => {
+    const lat = Number(result.lat);
+    const lng = Number(result.lon);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const map = mapRef.current as MapHelpers | null;
+    map?.__satqueryGoToLocation?.(lng, lat);
+
+    setSearchQuery(result.display_name);
+    setSearchResults([]);
+    setSearchError("");
+  };
 
   const finishPolygon = () => {
     const map = mapRef.current as MapHelpers | null;
@@ -410,6 +539,53 @@ export default function SatelliteMap({
         ref={mapContainer}
         className="absolute inset-0 w-full h-full"
       />
+
+      {/* LOCATION SEARCH */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-[min(520px,calc(100%-2rem))]">
+        <form
+          onSubmit={handleSearch}
+          className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl p-2 shadow-2xl"
+        >
+          <SearchIcon />
+          <input
+            value={searchQuery}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setSearchError("");
+            }}
+            placeholder="Search any place on Earth..."
+            className="min-w-0 flex-1 bg-transparent px-1 py-2 text-xs text-white outline-none placeholder:text-gray-500"
+          />
+          <button
+            type="submit"
+            disabled={!searchQuery.trim() || isSearching}
+            className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-semibold text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isSearching ? "Searching..." : "Search"}
+          </button>
+        </form>
+
+        {(searchResults.length > 0 || searchError) && (
+          <div className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-[#07111c]/95 backdrop-blur-xl shadow-2xl">
+            {searchError && (
+              <div className="px-4 py-3 text-xs text-red-300">
+                {searchError}
+              </div>
+            )}
+
+            {searchResults.map((result, index) => (
+              <button
+                key={`${result.lat}-${result.lon}-${index}`}
+                type="button"
+                onClick={() => chooseSearchResult(result)}
+                className="block w-full border-b border-white/5 px-4 py-3 text-left text-xs text-gray-300 transition last:border-b-0 hover:bg-white/5 hover:text-white"
+              >
+                {result.display_name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="absolute top-4 left-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none">
         <div className="flex items-center gap-2">
