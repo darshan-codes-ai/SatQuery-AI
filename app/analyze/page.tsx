@@ -66,6 +66,20 @@ export default function AnalyzePage() {
   // Whether analysis has been performed
   const [analysisStarted, setAnalysisStarted] = useState(false);
 
+  // NDVI evidence overlay
+  const [evidenceUrl, setEvidenceUrl] = useState<string | null>(null);
+  const [evidenceBounds, setEvidenceBounds] = useState<
+    [
+      [number, number],
+      [number, number],
+      [number, number],
+      [number, number]
+    ] | null
+  >(null);
+  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
+
+
   // Uploaded image preview
   const [uploadedImage, setUploadedImage] =
     useState<string | null>(null);
@@ -231,6 +245,99 @@ export default function AnalyzePage() {
     setIsAnalyzing(false);
   }
 };
+
+  const clearEvidence = () => {
+    setEvidenceError("");
+    setEvidenceBounds(null);
+    setEvidenceUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+  };
+
+  const getEvidenceBounds = (): [
+    [number, number],
+    [number, number],
+    [number, number],
+    [number, number]
+  ] => {
+    if (selection.type === "Point") {
+      const [lng, lat] = selection.coordinates;
+      const size = 0.0025;
+
+      return [
+        [lng - size, lat + size],
+        [lng + size, lat + size],
+        [lng + size, lat - size],
+        [lng - size, lat - size],
+      ];
+    }
+
+    const ring = selection.coordinates[0] ?? [];
+    const longitudes = ring.map(([lng]) => lng);
+    const latitudes = ring.map(([, lat]) => lat);
+
+    const minLng = Math.min(...longitudes);
+    const maxLng = Math.max(...longitudes);
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+
+    return [
+      [minLng, maxLat],
+      [maxLng, maxLat],
+      [maxLng, minLat],
+      [minLng, minLat],
+    ];
+  };
+
+  const showEvidenceOnMap = async () => {
+    if (isEvidenceLoading) return;
+
+    setIsEvidenceLoading(true);
+    setEvidenceError("");
+
+    try {
+      const geometry = encodeURIComponent(
+        JSON.stringify(selection)
+      );
+
+      const response = await fetch(
+        `/api/evidence?index=ndvi&geometry=${geometry}`,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(
+          data?.error || "Evidence image could not be generated."
+        );
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      setEvidenceUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return objectUrl;
+      });
+
+      setEvidenceBounds(getEvidenceBounds());
+    } catch (error) {
+      console.error("SatQuery evidence error:", error);
+      setEvidenceError(
+        error instanceof Error
+          ? error.message
+          : "Could not show evidence on the map."
+      );
+    } finally {
+      setIsEvidenceLoading(false);
+    }
+  };
+
+  const handleSelectionChange = (nextSelection: SelectionGeometry) => {
+    setSelection(nextSelection);
+    clearEvidence();
+  };
 
   // =========================================================
   // PAGE
@@ -520,7 +627,9 @@ export default function AnalyzePage() {
 
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
-              onSelectionChange={setSelection}
+              onSelectionChange={handleSelectionChange}
+              evidenceUrl={evidenceUrl}
+              evidenceBounds={evidenceBounds}
             />
 
           </div>
@@ -1100,22 +1209,37 @@ export default function AnalyzePage() {
                 {/* SHOW EVIDENCE */}
 
                 <button
+                  onClick={showEvidenceOnMap}
+                  disabled={isEvidenceLoading}
                   className="
                     w-full
                     mt-4
                     py-2
                     rounded-lg
                     border
-                    border-white/10
-                    hover:bg-white/5
+                    border-cyan-400/20
+                    bg-cyan-400/[0.03]
+                    hover:bg-cyan-400/[0.08]
+                    disabled:opacity-50
                     text-xs
-                    text-gray-400
+                    text-gray-300
+                    transition
                   "
                 >
 
-                  Show Evidence on Map
+                  {isEvidenceLoading
+                    ? "Generating NDVI evidence..."
+                    : evidenceUrl
+                      ? "Refresh NDVI Evidence"
+                      : "Show Evidence on Map"}
 
                 </button>
+
+                {evidenceError && (
+                  <p className="mt-2 text-[10px] text-red-300">
+                    {evidenceError}
+                  </p>
+                )}
 
               </div>
 

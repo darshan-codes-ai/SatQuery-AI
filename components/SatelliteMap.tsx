@@ -24,6 +24,8 @@ type SelectionMode = "point" | "rectangle" | "polygon";
 type SatelliteMapProps = {
   onCoordinatesChange?: (coordinates: Coordinates) => void;
   onSelectionChange?: (selection: SelectionGeometry) => void;
+  evidenceUrl?: string | null;
+  evidenceBounds?: EvidenceBounds | null;
 };
 
 type SearchResult = {
@@ -31,6 +33,13 @@ type SearchResult = {
   lat: string;
   lon: string;
 };
+
+type EvidenceBounds = [
+  [number, number],
+  [number, number],
+  [number, number],
+  [number, number]
+];
 
 const SELECTION_SOURCE = "satquery-selection";
 const SELECTION_FILL = "satquery-selection-fill";
@@ -67,9 +76,12 @@ function SearchIcon() {
 export default function SatelliteMap({
   onCoordinatesChange,
   onSelectionChange,
+  evidenceUrl,
+  evidenceBounds,
 }: SatelliteMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapLoadedRef = useRef(false);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const modeRef = useRef<SelectionMode>("point");
   const rectangleStartRef = useRef<[number, number] | null>(null);
@@ -164,6 +176,8 @@ export default function SatelliteMap({
     );
 
     map.on("load", () => {
+      mapLoadedRef.current = true;
+
       map.addSource(SELECTION_SOURCE, {
         type: "geojson",
         data: {
@@ -448,8 +462,68 @@ export default function SatelliteMap({
 
       map.remove();
       mapRef.current = null;
+      mapLoadedRef.current = false;
     };
   }, []);
+
+  // =====================================================
+  // NDVI EVIDENCE OVERLAY
+  // =====================================================
+
+  useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map || !mapLoadedRef.current) return;
+
+    const sourceId = "satquery-evidence";
+    const layerId = "satquery-evidence-layer";
+
+    if (!evidenceUrl || !evidenceBounds) {
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+
+      if (map.getSource(sourceId)) {
+        map.removeSource(sourceId);
+      }
+
+      return;
+    }
+
+    const existingSource = map.getSource(sourceId) as
+      | maplibregl.ImageSource
+      | undefined;
+
+    if (existingSource) {
+      existingSource.updateImage({
+        url: evidenceUrl,
+        coordinates: evidenceBounds,
+      });
+    } else {
+      map.addSource(sourceId, {
+        type: "image",
+        url: evidenceUrl,
+        coordinates: evidenceBounds,
+      });
+
+      const beforeId = map.getLayer(SELECTION_FILL)
+        ? SELECTION_FILL
+        : undefined;
+
+      map.addLayer(
+        {
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": 0.72,
+            "raster-fade-duration": 0,
+          },
+        },
+        beforeId
+      );
+    }
+  }, [evidenceUrl, evidenceBounds]);
 
   const handleSearch = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -658,6 +732,36 @@ export default function SatelliteMap({
           <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.9)]" />
         </div>
       </div>
+
+      {evidenceUrl && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl px-4 py-3 shadow-xl">
+          <div className="text-[9px] uppercase tracking-widest text-gray-400 mb-2">
+            NDVI Evidence
+          </div>
+          <div className="flex items-center gap-3 text-[9px] text-gray-400">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-red-500" />
+              Low
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-orange-400" />
+              Sparse
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-yellow-300" />
+              Moderate
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-green-400" />
+              Healthy
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-emerald-700" />
+              Dense
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="absolute bottom-4 left-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none">
         <div className="text-[9px] text-gray-400 uppercase tracking-widest">
