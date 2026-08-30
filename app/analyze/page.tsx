@@ -41,6 +41,31 @@ export default function AnalyzePage() {
         coordinates: [number, number][][];
       };
 
+  type AreaStats = {
+    area: {
+      km2: number;
+      hectares: number;
+    };
+    coverage: {
+      validDataPercent: number;
+      geometryPixelCount: number;
+      sampleCount: number;
+      noDataCount: number;
+    };
+    estimatedBreakdown: {
+      vegetationPercent: number;
+      waterPercent: number;
+      builtupPercent: number;
+      otherPercent: number;
+      vegetationHa: number;
+      waterHa: number;
+      builtupHa: number;
+      otherHa: number;
+    };
+    acquisitionDate: string | null;
+    note: string;
+  };
+
   const [selectedCoordinates, setSelectedCoordinates] = useState({
   lat: 21.1938,
   lng: 81.3509,
@@ -81,6 +106,23 @@ export default function AnalyzePage() {
   const [evidenceIndex, setEvidenceIndex] = useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
   const [evidenceDate, setEvidenceDate] = useState<string | null>(null);
 
+  const [areaStats, setAreaStats] = useState<AreaStats | null>(null);
+  const [isAreaStatsLoading, setIsAreaStatsLoading] = useState(false);
+  const [areaStatsError, setAreaStatsError] = useState("");
+
+  const evidenceValue =
+    evidenceIndex === "ndvi"
+      ? analysisResults.ndvi
+      : evidenceIndex === "ndwi"
+        ? analysisResults.ndwi
+        : analysisResults.ndbi;
+
+  const evidenceLabel =
+    evidenceIndex === "ndvi"
+      ? "NDVI"
+      : evidenceIndex === "ndwi"
+        ? "NDWI"
+        : "NDBI";
 
   // Uploaded image preview
   const [uploadedImage, setUploadedImage] =
@@ -346,9 +388,55 @@ export default function AnalyzePage() {
     }
   };
 
+  const loadAreaStats = async () => {
+    if (isAreaStatsLoading || !analysisStarted) return;
+
+    setIsAreaStatsLoading(true);
+    setAreaStatsError("");
+
+    try {
+      const geometry = encodeURIComponent(
+        JSON.stringify(selection)
+      );
+
+      const dateParam = evidenceDate
+        ? `&date=${encodeURIComponent(evidenceDate)}`
+        : "";
+
+      const response = await fetch(
+        `/api/area-stats?geometry=${geometry}${dateParam}`,
+        { cache: "no-store" }
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error || "Area statistics could not be calculated."
+        );
+      }
+
+      setAreaStats(data as AreaStats);
+    } catch (error) {
+      console.error(
+        "SatQuery area statistics error:",
+        error
+      );
+      setAreaStatsError(
+        error instanceof Error
+          ? error.message
+          : "Could not calculate area statistics."
+      );
+    } finally {
+      setIsAreaStatsLoading(false);
+    }
+  };
+
   const handleSelectionChange = (nextSelection: SelectionGeometry) => {
     setSelection(nextSelection);
     clearEvidence();
+    setAreaStats(null);
+    setAreaStatsError("");
   };
 
   // =========================================================
@@ -1121,7 +1209,7 @@ export default function AnalyzePage() {
                   >
 
                     <div className="text-[10px] text-gray-500">
-                      NDVI
+                      {evidenceLabel}
                     </div>
 
                     <div
@@ -1132,7 +1220,7 @@ export default function AnalyzePage() {
                         mt-1
                       "
                     >
-                      {analysisResults.ndvi.toFixed(2)}
+                      {evidenceValue.toFixed(2)}
                     </div>
 
                   </div>
@@ -1147,7 +1235,7 @@ export default function AnalyzePage() {
                   >
 
                     <div className="text-[10px] text-gray-500">
-                      CONFIDENCE
+                      DATA QUALITY
                     </div>
 
                     <div
@@ -1181,7 +1269,7 @@ export default function AnalyzePage() {
                   >
 
                     <span>
-                      Data coverage
+                      Valid satellite data
                     </span>
 
                     <span>
@@ -1246,6 +1334,15 @@ export default function AnalyzePage() {
                       </button>
                     ))}
                   </div>
+
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-600">
+                    {evidenceIndex === "ndvi" &&
+                      "NDVI: lower values indicate little or stressed vegetation; higher values indicate stronger vegetation signals."}
+                    {evidenceIndex === "ndwi" &&
+                      "NDWI: higher values indicate stronger surface-water signals; interpret near-zero values with the map context."}
+                    {evidenceIndex === "ndbi" &&
+                      "NDBI: higher values indicate stronger built-up signals; this is an index signal, not a definitive land-cover classification."}
+                  </p>
                 </div>
 
                 <button
@@ -1284,6 +1381,87 @@ export default function AnalyzePage() {
             )}
 
           </div>
+
+
+          {/* =================================================
+              AREA STATISTICS
+          ================================================= */}
+
+          {analysisStarted && (
+            <div className="px-5 pb-5">
+              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Layers size={15} className="text-cyan-400" />
+                      <span className="text-xs font-semibold">AREA STATISTICS</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      Estimate the selected area's size and index-based land signals.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadAreaStats}
+                    disabled={isAreaStatsLoading}
+                    className="rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-[10px] text-cyan-300 transition hover:bg-cyan-400/10 disabled:opacity-50"
+                  >
+                    {isAreaStatsLoading ? "Calculating..." : areaStats ? "Refresh" : "Calculate"}
+                  </button>
+                </div>
+
+                {areaStatsError && (
+                  <p className="mt-3 text-[10px] leading-relaxed text-red-300">
+                    {areaStatsError}
+                  </p>
+                )}
+
+                {areaStats && (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-xl bg-black/20 p-3">
+                        <div className="text-[9px] uppercase tracking-widest text-gray-500">Area</div>
+                        <div className="mt-1 text-lg font-bold text-white">{areaStats.area.km2.toFixed(3)} km²</div>
+                      </div>
+                      <div className="rounded-xl bg-black/20 p-3">
+                        <div className="text-[9px] uppercase tracking-widest text-gray-500">Hectares</div>
+                        <div className="mt-1 text-lg font-bold text-cyan-300">{areaStats.area.hectares.toFixed(2)} ha</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Estimated land-signal breakdown</div>
+
+                      <div className="space-y-2">
+                        <BreakdownRow label="Vegetation" percent={areaStats.estimatedBreakdown.vegetationPercent} hectares={areaStats.estimatedBreakdown.vegetationHa} />
+                        <BreakdownRow label="Water" percent={areaStats.estimatedBreakdown.waterPercent} hectares={areaStats.estimatedBreakdown.waterHa} />
+                        <BreakdownRow label="Built-up" percent={areaStats.estimatedBreakdown.builtupPercent} hectares={areaStats.estimatedBreakdown.builtupHa} />
+                        <BreakdownRow label="Other" percent={areaStats.estimatedBreakdown.otherPercent} hectares={areaStats.estimatedBreakdown.otherHa} />
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                      <div className="flex items-center justify-between text-[10px] text-gray-500">
+                        <span>Valid satellite data</span>
+                        <span>{areaStats.coverage.validDataPercent.toFixed(1)}%</span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-cyan-400"
+                          style={{ width: `${Math.min(100, Math.max(0, areaStats.coverage.validDataPercent))}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-[9px] leading-relaxed text-gray-600">
+                      {areaStats.note}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
 
           {/* =================================================
@@ -1617,6 +1795,32 @@ export default function AnalyzePage() {
   );
 }
 
+
+
+function BreakdownRow({
+  label,
+  percent,
+  hectares,
+}: {
+  label: string;
+  percent: number;
+  hectares: number;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[10px]">
+        <span className="text-gray-400">{label}</span>
+        <span className="text-gray-500">{percent.toFixed(1)}% · {hectares.toFixed(2)} ha</span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
+        <div
+          className="h-full rounded-full bg-cyan-400/70"
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 /* =============================================================
    METRIC CARD
