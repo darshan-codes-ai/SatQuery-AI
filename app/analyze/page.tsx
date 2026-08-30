@@ -78,6 +78,8 @@ export default function AnalyzePage() {
   >(null);
   const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
+  const [evidenceIndex, setEvidenceIndex] = useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
+  const [evidenceDate, setEvidenceDate] = useState<string | null>(null);
 
 
   // Uploaded image preview
@@ -226,6 +228,12 @@ export default function AnalyzePage() {
       confidence: data.confidence,
     });
 
+    if (data.analysis?.type === "ndvi" || data.analysis?.type === "ndwi" || data.analysis?.type === "ndbi") {
+      setEvidenceIndex(data.analysis.type);
+      setEvidenceError("");
+    }
+
+    setEvidenceDate(data.metadata?.acquisitionDate ?? null);
     setAnalysisStarted(true);
   } catch (error) {
     console.error(
@@ -301,8 +309,12 @@ export default function AnalyzePage() {
         JSON.stringify(selection)
       );
 
+      const dateParam = evidenceDate
+        ? `&date=${encodeURIComponent(evidenceDate)}`
+        : "";
+
       const response = await fetch(
-        `/api/evidence?index=ndvi&geometry=${geometry}`,
+        `/api/evidence?index=${evidenceIndex}&geometry=${geometry}${dateParam}`,
         { cache: "no-store" }
       );
 
@@ -630,6 +642,7 @@ export default function AnalyzePage() {
               onSelectionChange={handleSelectionChange}
               evidenceUrl={evidenceUrl}
               evidenceBounds={evidenceBounds}
+              evidenceIndex={evidenceIndex}
             />
 
           </div>
@@ -1168,7 +1181,7 @@ export default function AnalyzePage() {
                   >
 
                     <span>
-                      Vegetation coverage
+                      Data coverage
                     </span>
 
                     <span>
@@ -1206,14 +1219,41 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* SHOW EVIDENCE */}
+                {/* EVIDENCE INDEX SELECTOR */}
+
+                <div className="mt-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Evidence layer</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ["ndvi", "NDVI"],
+                      ["ndwi", "NDWI"],
+                      ["ndbi", "NDBI"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setEvidenceIndex(value);
+                          clearEvidence();
+                        }}
+                        className={`rounded-lg border px-3 py-2 text-[10px] transition ${
+                          evidenceIndex === value
+                            ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                            : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 <button
                   onClick={showEvidenceOnMap}
-                  disabled={isEvidenceLoading}
+                  disabled={isEvidenceLoading || !analysisStarted}
                   className="
                     w-full
-                    mt-4
+                    mt-3
                     py-2
                     rounded-lg
                     border
@@ -1226,13 +1266,11 @@ export default function AnalyzePage() {
                     transition
                   "
                 >
-
                   {isEvidenceLoading
-                    ? "Generating NDVI evidence..."
+                    ? `Generating ${evidenceIndex.toUpperCase()} evidence...`
                     : evidenceUrl
-                      ? "Refresh NDVI Evidence"
-                      : "Show Evidence on Map"}
-
+                      ? `Refresh ${evidenceIndex.toUpperCase()} Evidence`
+                      : `Show ${evidenceIndex.toUpperCase()} Evidence on Map`}
                 </button>
 
                 {evidenceError && (

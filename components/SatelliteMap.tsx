@@ -26,6 +26,7 @@ type SatelliteMapProps = {
   onSelectionChange?: (selection: SelectionGeometry) => void;
   evidenceUrl?: string | null;
   evidenceBounds?: EvidenceBounds | null;
+  evidenceIndex?: "ndvi" | "ndwi" | "ndbi";
 };
 
 type SearchResult = {
@@ -78,6 +79,7 @@ export default function SatelliteMap({
   onSelectionChange,
   evidenceUrl,
   evidenceBounds,
+  evidenceIndex = "ndvi",
 }: SatelliteMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -736,29 +738,36 @@ export default function SatelliteMap({
       {evidenceUrl && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl px-4 py-3 shadow-xl">
           <div className="text-[9px] uppercase tracking-widest text-gray-400 mb-2">
-            NDVI Evidence
+            {evidenceIndex.toUpperCase()} Evidence
           </div>
           <div className="flex items-center gap-3 text-[9px] text-gray-400">
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-red-500" />
-              Low
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-orange-400" />
-              Sparse
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-yellow-300" />
-              Moderate
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-green-400" />
-              Healthy
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-emerald-700" />
-              Dense
-            </div>
+            {evidenceIndex === "ndvi" && (
+              <>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500" />Low</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400" />Sparse</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-yellow-300" />Moderate</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-green-400" />Healthy</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-700" />Dense</div>
+              </>
+            )}
+            {evidenceIndex === "ndwi" && (
+              <>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-500" />Dry</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400" />Low</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-yellow-300" />Moderate</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-400" />Wet</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-cyan-700" />Water</div>
+              </>
+            )}
+            {evidenceIndex === "ndbi" && (
+              <>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-500" />Low</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-300" />Near zero</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-yellow-300" />Moderate</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400" />Built-up</div>
+                <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-red-800" />Dense</div>
+              </>
+            )}
           </div>
         </div>
       )}

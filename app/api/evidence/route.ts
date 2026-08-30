@@ -145,81 +145,93 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-// NDVI visualization:
-// < 0.00 red
-// 0.00-0.20 orange
-// 0.20-0.40 yellow
-// 0.40-0.60 light green
-// > 0.60 dark green
-const NDVI_EVALSCRIPT = `
+// Evidence visualization evalscripts.
+// The output is a simple categorical RGBA image so the
+// frontend can display the selected index directly on the map.
+const EVALSCRIPTS: Record<"ndvi" | "ndwi" | "ndbi", string> = {
+  ndvi: `
 //VERSION=3
-
 function setup() {
   return {
-    input: [{
-      bands: ["B04", "B08", "SCL", "dataMask"]
-    }],
-    output: {
-      bands: 4,
-      sampleType: "UINT8"
-    }
+    input: [{ bands: ["B04", "B08", "SCL", "dataMask"] }],
+    output: { bands: 4, sampleType: "UINT8" }
   };
 }
-
 function evaluatePixel(sample) {
-  const invalid =
-    sample.dataMask === 0 ||
-    sample.SCL === 0 ||
-    sample.SCL === 1 ||
-    sample.SCL === 3 ||
-    sample.SCL === 8 ||
-    sample.SCL === 9 ||
-    sample.SCL === 10 ||
-    sample.SCL === 11;
-
-  if (invalid) {
-    return [0, 0, 0, 0];
-  }
-
+  const invalid = sample.dataMask === 0 ||
+    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
+    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  if (invalid) return [0, 0, 0, 0];
   const denominator = sample.B08 + sample.B04;
-
-  if (denominator === 0) {
-    return [0, 0, 0, 0];
-  }
-
-  const ndvi = (sample.B08 - sample.B04) / denominator;
-
-  if (ndvi < 0.0) {
-    return [220, 38, 38, 190];
-  }
-
-  if (ndvi < 0.2) {
-    return [249, 115, 22, 190];
-  }
-
-  if (ndvi < 0.4) {
-    return [250, 204, 21, 185];
-  }
-
-  if (ndvi < 0.6) {
-    return [74, 222, 128, 190];
-  }
-
+  if (denominator === 0) return [0, 0, 0, 0];
+  const value = (sample.B08 - sample.B04) / denominator;
+  if (value < 0) return [220, 38, 38, 190];
+  if (value < 0.2) return [249, 115, 22, 190];
+  if (value < 0.4) return [250, 204, 21, 185];
+  if (value < 0.6) return [74, 222, 128, 190];
   return [5, 150, 105, 200];
 }
-`;
+`,
+  ndwi: `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["B03", "B08", "SCL", "dataMask"] }],
+    output: { bands: 4, sampleType: "UINT8" }
+  };
+}
+function evaluatePixel(sample) {
+  const invalid = sample.dataMask === 0 ||
+    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
+    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  if (invalid) return [0, 0, 0, 0];
+  const denominator = sample.B03 + sample.B08;
+  if (denominator === 0) return [0, 0, 0, 0];
+  const value = (sample.B03 - sample.B08) / denominator;
+  if (value < -0.2) return [180, 38, 38, 185];
+  if (value < 0) return [249, 115, 22, 180];
+  if (value < 0.2) return [253, 224, 71, 175];
+  if (value < 0.4) return [96, 165, 250, 190];
+  return [14, 116, 144, 205];
+}
+`,
+  ndbi: `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["B08", "B11", "SCL", "dataMask"] }],
+    output: { bands: 4, sampleType: "UINT8" }
+  };
+}
+function evaluatePixel(sample) {
+  const invalid = sample.dataMask === 0 ||
+    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
+    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  if (invalid) return [0, 0, 0, 0];
+  const denominator = sample.B11 + sample.B08;
+  if (denominator === 0) return [0, 0, 0, 0];
+  const value = (sample.B11 - sample.B08) / denominator;
+  if (value < -0.2) return [37, 99, 235, 185];
+  if (value < 0) return [96, 165, 250, 180];
+  if (value < 0.2) return [250, 204, 21, 175];
+  if (value < 0.4) return [249, 115, 22, 190];
+  return [127, 29, 29, 205];
+}
+`,
+};
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const index = url.searchParams.get("index") ?? "ndvi";
     const geometryRaw = url.searchParams.get("geometry");
+    const requestedDate = url.searchParams.get("date");
 
-    if (index !== "ndvi") {
+    if (!(["ndvi", "ndwi", "ndbi"] as const).includes(index as any)) {
       return NextResponse.json(
         {
           success: false,
-          error: "Only NDVI evidence is enabled in this version.",
+          error: "Supported evidence indices are NDVI, NDWI and NDBI.",
         },
         { status: 400 }
       );
@@ -268,8 +280,8 @@ export async function GET(request: Request) {
     // Use a one-year window and let leastCC choose a suitable
     // acquisition. The image is an evidence visualization,
     // not the source of the numeric statistics.
-    const to = new Date();
-    const from = new Date(
+    let to = new Date();
+    let from = new Date(
       to.getTime() -
         365 *
           24 *
@@ -277,6 +289,26 @@ export async function GET(request: Request) {
           60 *
           1000
     );
+
+    // When the analysis API provides the acquisition date,
+    // render evidence from the same date so the visualization
+    // and numeric result refer to the same observation.
+    if (requestedDate) {
+      const sceneDate = new Date(requestedDate);
+
+      if (Number.isNaN(sceneDate.getTime())) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Invalid evidence acquisition date.",
+          },
+          { status: 400 }
+        );
+      }
+
+      from = new Date(sceneDate.getTime() - 12 * 60 * 60 * 1000);
+      to = new Date(sceneDate.getTime() + 12 * 60 * 60 * 1000);
+    }
 
     const requestBody = {
       input: {
@@ -316,7 +348,7 @@ export async function GET(request: Request) {
           },
         ],
       },
-      evalscript: NDVI_EVALSCRIPT,
+      evalscript: EVALSCRIPTS[index as "ndvi" | "ndwi" | "ndbi"],
     };
 
     const response = await fetch(PROCESS_URL, {
@@ -355,7 +387,7 @@ export async function GET(request: Request) {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "no-store",
-        "X-SatQuery-Evidence": "NDVI",
+        "X-SatQuery-Evidence": index.toUpperCase(),
       },
     });
   } catch (error) {
