@@ -14,7 +14,7 @@ type TokenResponse = {
 type Stats = {
   min?: number | string;
   max?: number | string;
-  mean?: number | string | unknown;
+  mean?: number | string | null;
   stDev?: number | string;
   sampleCount?: number | string;
   noDataCount?: number | string;
@@ -74,13 +74,8 @@ const SENTINEL_STATISTICS_URL =
   "https://services.sentinel-hub.com/api/v1/statistics";
 
 // =========================================================
-// NUMBER CONVERSION
+// NUMBER HELPER
 // =========================================================
-//
-// Sentinel/API responses can sometimes contain values in
-// unexpected forms. This helper makes sure our application
-// always gets a real finite JavaScript number.
-//
 
 function toNumber(
   value: unknown,
@@ -100,59 +95,17 @@ function toNumber(
       : fallback;
   }
 
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const parsed = toNumber(
-        item,
-        Number.NaN
-      );
-
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-
-  if (
-    value &&
-    typeof value === "object"
-  ) {
-    const objectValue =
-      value as Record<string, unknown>;
-
-    const possibleKeys = [
-      "mean",
-      "value",
-      "numericValue",
-    ];
-
-    for (
-      const key of possibleKeys
-    ) {
-      if (key in objectValue) {
-        const parsed = toNumber(
-          objectValue[key],
-          Number.NaN
-        );
-
-        if (Number.isFinite(parsed)) {
-          return parsed;
-        }
-      }
-    }
-  }
-
   return fallback;
 }
 
 // =========================================================
-// CREATE BOUNDING BOX
+// CREATE ANALYSIS BOUNDING BOX
 // =========================================================
 
 function createBBox(
   lat: number,
   lng: number,
-  size = 0.05
+  size = 0.03
 ): [number, number, number, number] {
   return [
     lng - size,
@@ -163,7 +116,7 @@ function createBBox(
 }
 
 // =========================================================
-// GET SENTINEL HUB ACCESS TOKEN
+// GET SENTINEL HUB TOKEN
 // =========================================================
 
 async function getAccessToken(): Promise<string> {
@@ -237,16 +190,16 @@ async function getAccessToken(): Promise<string> {
 
   try {
     data =
-      JSON.parse(text) as TokenResponse;
+      JSON.parse(
+        text
+      ) as TokenResponse;
   } catch {
     throw new Error(
       "Invalid authentication response from Sentinel Hub."
     );
   }
 
-  if (
-    !data.access_token
-  ) {
+  if (!data.access_token) {
     throw new Error(
       "Sentinel Hub did not return an access token."
     );
@@ -256,13 +209,13 @@ async function getAccessToken(): Promise<string> {
 }
 
 // =========================================================
-// FIND LATEST SENTINEL-2 SCENE
+// FIND AVAILABLE SENTINEL-2 SCENES
 // =========================================================
 
-async function findLatestSentinelScene(
+async function findSentinelScenes(
   accessToken: string,
   coordinates: Coordinates
-): Promise<CatalogFeature | null> {
+): Promise<CatalogFeature[]> {
   const bbox =
     createBBox(
       coordinates.lat,
@@ -303,15 +256,6 @@ async function findLatestSentinelScene(
     },
   };
 
-  console.log(
-    "Sentinel Catalog request:",
-    JSON.stringify(
-      requestBody,
-      null,
-      2
-    )
-  );
-
   const response =
     await fetch(
       SENTINEL_CATALOG_URL,
@@ -343,7 +287,7 @@ async function findLatestSentinelScene(
 
   if (!response.ok) {
     console.error(
-      "Sentinel Catalog API error:",
+      "Catalog API error:",
       response.status,
       text
     );
@@ -374,68 +318,66 @@ async function findLatestSentinelScene(
       ? data.features
       : [];
 
-  console.log(
-    "Catalog feature count:",
-    features.length
-  );
-
-  if (
-    features.length === 0
-  ) {
-    return null;
-  }
-
-  // Newest acquisition first.
+  // Prefer lower cloud coverage,
+  // then newer acquisition date.
   features.sort(
     (a, b) => {
+      const cloudA =
+        toNumber(
+          a.properties
+            ?.["eo:cloud_cover"],
+          100
+        );
+
+      const cloudB =
+        toNumber(
+          b.properties
+            ?.["eo:cloud_cover"],
+          100
+        );
+
+      if (
+        cloudA !== cloudB
+      ) {
+        return cloudA - cloudB;
+      }
+
       const dateA =
         new Date(
-          a.properties?.datetime ??
-            0
+          a.properties
+            ?.datetime ?? 0
         ).getTime();
 
       const dateB =
         new Date(
-          b.properties?.datetime ??
-            0
+          b.properties
+            ?.datetime ?? 0
         ).getTime();
 
       return dateB - dateA;
     }
   );
 
-  const latest =
-    features[0];
-
   console.log(
-    "Selected Sentinel-2 scene:",
-    {
-      id:
-        latest?.id,
-
-      datetime:
-        latest?.properties
-          ?.datetime,
-
-      cloudCoverage:
-        latest?.properties
-          ?.["eo:cloud_cover"],
-    }
+    "Sentinel-2 scenes found:",
+    features.length
   );
 
-  return latest;
+  return features;
 }
 
 // =========================================================
 // EVALSCRIPT
 // =========================================================
 //
+// Sentinel-2 L2A:
+//
 // B03 = Green
 // B04 = Red
 // B08 = NIR
 // B11 = SWIR
 // SCL = Scene Classification
-// dataMask = valid-data mask
+// dataMask = valid data
 //
 // =========================================================
 
@@ -445,7 +387,9 @@ const EVALSCRIPT = `
 function setup() {
 
   return {
+
     input: [{
+
       bands: [
         "B03",
         "B04",
@@ -454,9 +398,11 @@ function setup() {
         "SCL",
         "dataMask"
       ]
+
     }],
 
     output: [
+
       {
         id: "ndvi",
         bands: 1,
@@ -480,8 +426,11 @@ function setup() {
         bands: 1,
         sampleType: "UINT8"
       }
+
     ]
+
   };
+
 }
 
 function evaluatePixel(sample) {
@@ -499,73 +448,88 @@ function evaluatePixel(sample) {
   if (invalid) {
 
     return {
+
       ndvi: [0],
+
       ndwi: [0],
+
       ndbi: [0],
+
       dataMask: [0]
+
     };
 
   }
 
   const ndviDenominator =
-    sample.B08 + sample.B04;
+    sample.B08 +
+    sample.B04;
 
   const ndwiDenominator =
-    sample.B03 + sample.B08;
+    sample.B03 +
+    sample.B08;
 
   const ndbiDenominator =
-    sample.B11 + sample.B08;
+    sample.B11 +
+    sample.B08;
 
   const ndvi =
     ndviDenominator !== 0
+
       ? (
           sample.B08 -
           sample.B04
         ) /
         ndviDenominator
+
       : 0;
 
   const ndwi =
     ndwiDenominator !== 0
+
       ? (
           sample.B03 -
           sample.B08
         ) /
         ndwiDenominator
+
       : 0;
 
   const ndbi =
     ndbiDenominator !== 0
+
       ? (
           sample.B11 -
           sample.B08
         ) /
         ndbiDenominator
+
       : 0;
 
   return {
+
     ndvi: [ndvi],
+
     ndwi: [ndwi],
+
     ndbi: [ndbi],
+
     dataMask: [1]
+
   };
+
 }
 `;
 
 // =========================================================
-// REQUEST STATISTICS FOR THE DISCOVERED SCENE
+// REQUEST STATISTICS FOR ONE SCENE
 // =========================================================
 
-async function getSatelliteStatistics(
+async function getStatisticsForScene(
   accessToken: string,
   coordinates: Coordinates,
   scene: CatalogFeature
 ): Promise<StatisticsResponse> {
-  const bbox =
-    createBBox(
-      coordinates.lat,
-      coordinates.lng
-    );
 
   const sceneDateString =
     scene.properties
@@ -573,7 +537,7 @@ async function getSatelliteStatistics(
 
   if (!sceneDateString) {
     throw new Error(
-      "The Sentinel-2 scene has no acquisition date."
+      "Scene has no acquisition date."
     );
   }
 
@@ -588,67 +552,90 @@ async function getSatelliteStatistics(
     )
   ) {
     throw new Error(
-      "The Sentinel-2 acquisition date is invalid."
+      "Scene has an invalid acquisition date."
     );
   }
 
-  // Analyze a 24-hour period around
-  // the discovered acquisition.
+  // Search a complete day around the scene.
   const from =
     new Date(
-      sceneDate.getTime() -
-        12 *
-          60 *
-          60 *
-          1000
+      sceneDate
+        .getUTCFullYear(),
+      sceneDate.getUTCMonth(),
+      sceneDate.getUTCDate()
     );
 
   const to =
     new Date(
-      sceneDate.getTime() +
-        12 *
+      from.getTime() +
+        24 *
           60 *
           60 *
           1000
     );
 
+  const bbox =
+    createBBox(
+      coordinates.lat,
+      coordinates.lng
+    );
+
   const requestBody = {
+
     input: {
+
       bounds: {
+
         bbox,
 
         properties: {
+
           crs:
-            "http://www.opengis.net/def/crs/OGC/1.3/CRS84",
-        },
+            "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+
+        }
+
       },
 
       data: [
+
         {
+
           type:
             "sentinel-2-l2a",
 
           dataFilter: {
-            maxCloudCoverage: 100,
+
+            maxCloudCoverage:
+              100,
 
             mosaickingOrder:
-              "leastCC",
-          },
-        },
-      ],
+              "leastCC"
+
+          }
+
+        }
+
+      ]
+
     },
 
     aggregation: {
+
       timeRange: {
+
         from:
           from.toISOString(),
 
         to:
-          to.toISOString(),
+          to.toISOString()
+
       },
 
       aggregationInterval: {
-        of: "P1D",
+
+        of: "P1D"
+
       },
 
       width: 128,
@@ -656,30 +643,27 @@ async function getSatelliteStatistics(
       height: 128,
 
       evalscript:
-        EVALSCRIPT,
+        EVALSCRIPT
+
     },
 
     calculations: {
-      default: {},
-    },
-  };
 
-  console.log(
-    "Sentinel Statistics request:",
-    JSON.stringify(
-      requestBody,
-      null,
-      2
-    )
-  );
+      default: {}
+
+    }
+
+  };
 
   const response =
     await fetch(
       SENTINEL_STATISTICS_URL,
       {
+
         method: "POST",
 
         headers: {
+
           Authorization:
             `Bearer ${accessToken}`,
 
@@ -687,7 +671,8 @@ async function getSatelliteStatistics(
             "application/json",
 
           Accept:
-            "application/json",
+            "application/json"
+
         },
 
         body:
@@ -695,7 +680,9 @@ async function getSatelliteStatistics(
             requestBody
           ),
 
-        cache: "no-store",
+        cache:
+          "no-store"
+
       }
     );
 
@@ -703,83 +690,54 @@ async function getSatelliteStatistics(
     await response.text();
 
   if (!response.ok) {
+
     console.error(
-      "Sentinel Statistics API error:",
+      "Statistics API error:",
       response.status,
       text
     );
 
     throw new Error(
-      `Sentinel Hub Statistics API error (${response.status}): ${text}`
+      `Statistics API error (${response.status}): ${text}`
     );
-  }
 
-  let data:
-    StatisticsResponse;
+  }
 
   try {
-    data =
-      JSON.parse(
-        text
-      ) as StatisticsResponse;
+
+    return JSON.parse(
+      text
+    ) as StatisticsResponse;
+
   } catch {
+
     throw new Error(
-      "Sentinel Hub returned invalid Statistics JSON."
+      "Invalid Statistics API response."
     );
+
   }
-
-  console.log(
-    "Sentinel Statistics response:",
-    JSON.stringify(
-      data,
-      null,
-      2
-    )
-  );
-
-  return data;
 }
 
 // =========================================================
-// EXTRACT A VALID OBSERVATION
+// EXTRACT VALID INDEX VALUES
 // =========================================================
 
-function getLatestObservation(
+function extractObservation(
   statistics: StatisticsResponse
 ) {
+
   if (
     !Array.isArray(
       statistics.data
-    ) ||
-    statistics.data.length === 0
+    )
   ) {
-    throw new Error(
-      "Sentinel Hub found a scene, but returned no statistics for that acquisition."
-    );
+    return null;
   }
 
-  const sorted =
-    [...statistics.data].sort(
-      (a, b) => {
-        const dateA =
-          new Date(
-            a.interval?.from ??
-              0
-          ).getTime();
-
-        const dateB =
-          new Date(
-            b.interval?.from ??
-              0
-          ).getTime();
-
-        return dateB - dateA;
-      }
-    );
-
   for (
-    const row of sorted
+    const row of statistics.data
   ) {
+
     const ndviStats =
       row.outputs
         ?.ndvi
@@ -824,7 +782,9 @@ function getLatestObservation(
       Number.isFinite(ndwi) &&
       Number.isFinite(ndbi)
     ) {
+
       return {
+
         row,
 
         ndvi,
@@ -833,38 +793,121 @@ function getLatestObservation(
 
         ndbi,
 
-        ndviStats: {
-          ...ndviStats,
+        ndviStats,
 
-          sampleCount:
-            toNumber(
-              ndviStats
-                ?.sampleCount
-            ),
+        ndwiStats,
 
-          noDataCount:
-            toNumber(
-              ndviStats
-                ?.noDataCount
-            ),
-        },
+        ndbiStats
+
       };
+
     }
+
   }
 
-  throw new Error(
-    "The Sentinel-2 scene was found, but valid numerical NDVI, NDWI and NDBI statistics were not returned."
-  );
+  return null;
 }
 
 // =========================================================
-// MAIN POST API
+// FIND A USABLE OBSERVATION
+// =========================================================
+
+async function findUsableObservation(
+  accessToken: string,
+  coordinates: Coordinates,
+  scenes: CatalogFeature[]
+) {
+
+  let attempts = 0;
+
+  for (
+    const scene of scenes
+  ) {
+
+    // Avoid making too many external requests.
+    if (
+      attempts >= 10
+    ) {
+      break;
+    }
+
+    attempts++;
+
+    console.log(
+      `Trying Sentinel-2 scene ${attempts}:`,
+      {
+        id:
+          scene.id,
+
+        datetime:
+          scene.properties
+            ?.datetime,
+
+        cloudCoverage:
+          scene.properties
+            ?.["eo:cloud_cover"]
+
+      }
+    );
+
+    try {
+
+      const statistics =
+        await getStatisticsForScene(
+          accessToken,
+          coordinates,
+          scene
+        );
+
+      const observation =
+        extractObservation(
+          statistics
+        );
+
+      if (observation) {
+
+        console.log(
+          "Usable Sentinel-2 scene found:",
+          scene.id
+        );
+
+        return {
+
+          ...observation,
+
+          scene,
+
+          statistics
+
+        };
+
+      }
+
+    } catch (error) {
+
+      console.warn(
+        "Scene failed, trying next scene:",
+        scene.id,
+        error
+      );
+
+    }
+
+  }
+
+  return null;
+}
+
+// =========================================================
+// MAIN API
 // =========================================================
 
 export async function POST(
   request: Request
 ) {
+
   try {
+
     const body =
       await request.json();
 
@@ -883,17 +926,21 @@ export async function POST(
         "string" ||
       !query.trim()
     ) {
+
       return NextResponse.json(
         {
           success: false,
 
           error:
-            "A valid query is required.",
+            "A valid query is required."
+
         },
+
         {
-          status: 400,
+          status: 400
         }
       );
+
     }
 
     // -----------------------------------------------------
@@ -907,55 +954,71 @@ export async function POST(
       typeof coordinates.lng !==
         "number"
     ) {
+
       return NextResponse.json(
         {
           success: false,
 
           error:
-            "Valid map coordinates are required.",
+            "Valid map coordinates are required."
+
         },
+
         {
-          status: 400,
+          status: 400
         }
       );
+
     }
+
+    // -----------------------------------------------------
+    // VALIDATE LAT/LNG
+    // -----------------------------------------------------
 
     if (
       coordinates.lat < -90 ||
       coordinates.lat > 90
     ) {
+
       return NextResponse.json(
         {
           success: false,
 
           error:
-            "Latitude must be between -90 and 90.",
+            "Latitude must be between -90 and 90."
+
         },
+
         {
-          status: 400,
+          status: 400
         }
       );
+
     }
 
     if (
       coordinates.lng < -180 ||
       coordinates.lng > 180
     ) {
+
       return NextResponse.json(
         {
           success: false,
 
           error:
-            "Longitude must be between -180 and 180.",
+            "Longitude must be between -180 and 180."
+
         },
+
         {
-          status: 400,
+          status: 400
         }
       );
+
     }
 
     // -----------------------------------------------------
-    // DETECT REQUESTED ANALYSIS
+    // DETECT ANALYSIS TYPE
     // -----------------------------------------------------
 
     const analysisType =
@@ -971,91 +1034,62 @@ export async function POST(
       await getAccessToken();
 
     // -----------------------------------------------------
-    // FIND REAL SENTINEL-2 SCENE
+    // FIND SCENES
     // -----------------------------------------------------
 
-    const scene =
-      await findLatestSentinelScene(
+    const scenes =
+      await findSentinelScenes(
         accessToken,
-
-        {
-          lat:
-            coordinates.lat,
-
-          lng:
-            coordinates.lng,
-        }
+        coordinates
       );
 
-    if (!scene) {
+    if (
+      scenes.length === 0
+    ) {
+
       throw new Error(
         "No Sentinel-2 scene was found for this location during the last year. Try selecting another land area."
       );
+
     }
 
     // -----------------------------------------------------
-    // GET SATELLITE STATISTICS
+    // FIND A USABLE SCENE
     // -----------------------------------------------------
 
-    const statistics =
-      await getSatelliteStatistics(
+    const result =
+      await findUsableObservation(
         accessToken,
-
-        {
-          lat:
-            coordinates.lat,
-
-          lng:
-            coordinates.lng,
-        },
-
-        scene
+        coordinates,
+        scenes
       );
 
-    // -----------------------------------------------------
-    // GET NUMERICAL OBSERVATION
-    // -----------------------------------------------------
+    if (!result) {
 
-    const observation =
-      getLatestObservation(
-        statistics
+      throw new Error(
+        "Sentinel-2 scenes were found, but none returned valid NDVI, NDWI and NDBI statistics for this location. Try another nearby location."
       );
 
+    }
+
     // -----------------------------------------------------
-    // FORCE NUMERIC VALUES
+    // VALUES
     // -----------------------------------------------------
 
     const ndvi =
       toNumber(
-        observation.ndvi,
-        0
+        result.ndvi
       );
 
     const ndwi =
       toNumber(
-        observation.ndwi,
-        0
+        result.ndwi
       );
 
     const ndbi =
       toNumber(
-        observation.ndbi,
-        0
+        result.ndbi
       );
-
-    // -----------------------------------------------------
-    // FINAL SAFETY CHECK
-    // -----------------------------------------------------
-
-    if (
-      !Number.isFinite(ndvi) ||
-      !Number.isFinite(ndwi) ||
-      !Number.isFinite(ndbi)
-    ) {
-      throw new Error(
-        "Sentinel Hub returned invalid numerical index values."
-      );
-    }
 
     // -----------------------------------------------------
     // DATA COVERAGE
@@ -1063,20 +1097,14 @@ export async function POST(
 
     const sampleCount =
       toNumber(
-        observation
-          .ndviStats
-          ?.sampleCount,
-
-        0
+        result.ndviStats
+          ?.sampleCount
       );
 
     const noDataCount =
       toNumber(
-        observation
-          .ndviStats
-          ?.noDataCount,
-
-        0
+        result.ndviStats
+          ?.noDataCount
       );
 
     const totalPixels =
@@ -1085,15 +1113,17 @@ export async function POST(
 
     const coverage =
       totalPixels > 0
+
         ? (
             sampleCount /
             totalPixels
           ) *
           100
+
         : 0;
 
     // -----------------------------------------------------
-    // QUALITY SCORE
+    // SIMPLE DATA QUALITY SCORE
     // -----------------------------------------------------
 
     const confidence =
@@ -1111,15 +1141,16 @@ export async function POST(
     // RESPONSE
     // -----------------------------------------------------
 
-    let primaryValue =
-      ndvi;
-
     let responseText =
       "";
+
+    let primaryValue =
+      ndvi;
 
     switch (
       analysisType
     ) {
+
       case "ndvi":
 
         primaryValue =
@@ -1166,8 +1197,7 @@ export async function POST(
 
         responseText =
           `This is a temporal-change query. ` +
-          `Reliable change detection requires comparable observations from multiple dates. ` +
-          `The current result uses the latest available Sentinel-2 acquisition.`;
+          `Reliable change detection requires comparable observations from multiple dates.`;
 
         break;
 
@@ -1187,31 +1217,37 @@ export async function POST(
           )}.`;
 
         break;
+
     }
 
     // -----------------------------------------------------
-    // RETURN API RESPONSE
+    // RETURN RESULT
     // -----------------------------------------------------
 
     return NextResponse.json({
+
       success: true,
 
       query:
         query.trim(),
 
       coordinates: {
+
         lat:
           coordinates.lat,
 
         lng:
-          coordinates.lng,
+          coordinates.lng
+
       },
 
       analysis: {
+
         type:
           analysisType,
 
         indices: {
+
           ndvi:
             Number(
               ndvi.toFixed(3)
@@ -1225,7 +1261,8 @@ export async function POST(
           ndbi:
             Number(
               ndbi.toFixed(3)
-            ),
+            )
+
         },
 
         primaryValue:
@@ -1236,7 +1273,8 @@ export async function POST(
         coverage:
           Number(
             coverage.toFixed(1)
-          ),
+          )
+
       },
 
       response:
@@ -1248,16 +1286,20 @@ export async function POST(
         ),
 
       metadata: {
+
         sensor:
           "Sentinel-2 L2A",
 
         acquisitionDate:
-          scene.properties
-            ?.datetime ?? null,
+          result.scene
+            ?.properties
+            ?.datetime ??
+          null,
 
         cloudCoverage:
           toNumber(
-            scene.properties
+            result.scene
+              ?.properties
               ?.["eo:cloud_cover"],
             0
           ),
@@ -1269,20 +1311,26 @@ export async function POST(
           "Sentinel Hub Catalog + Statistical API",
 
         dataQuality: {
+
           sampleCount,
 
           noDataCount,
 
           geometryPixelCount:
             toNumber(
-              statistics
-                .geometryPixelCount,
+              result.statistics
+                ?.geometryPixelCount,
               0
-            ),
-        },
-      },
+            )
+
+        }
+
+      }
+
     });
+
   } catch (error) {
+
     console.error(
       "SatQuery analysis error:",
       error
@@ -1295,14 +1343,19 @@ export async function POST(
 
     return NextResponse.json(
       {
+
         success: false,
 
         error:
-          message,
+          message
+
       },
+
       {
-        status: 500,
+        status: 500
       }
     );
+
   }
+
 }
