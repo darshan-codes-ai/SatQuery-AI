@@ -27,6 +27,8 @@ type SatelliteMapProps = {
   evidenceUrl?: string | null;
   evidenceBounds?: EvidenceBounds | null;
   evidenceIndex?: "ndvi" | "ndwi" | "ndbi";
+  changeHeatmapUrl?: string | null;
+  changeHeatmapBounds?: EvidenceBounds | null;
 };
 
 type SearchResult = {
@@ -80,6 +82,8 @@ export default function SatelliteMap({
   evidenceUrl,
   evidenceBounds,
   evidenceIndex = "ndvi",
+  changeHeatmapUrl,
+  changeHeatmapBounds,
 }: SatelliteMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -469,6 +473,65 @@ export default function SatelliteMap({
   }, []);
 
   // =====================================================
+  // CHANGE HEATMAP OVERLAY
+  // =====================================================
+
+  useEffect(() => {
+    const map = mapRef.current;
+
+    if (!map || !mapLoadedRef.current) return;
+
+    const sourceId = "satquery-change-heatmap";
+    const layerId = "satquery-change-heatmap-layer";
+
+    if (!changeHeatmapUrl || !changeHeatmapBounds) {
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+
+      if (map.getSource(sourceId)) {
+        map.removeSource(sourceId);
+      }
+
+      return;
+    }
+
+    const existingSource = map.getSource(sourceId) as
+      | maplibregl.ImageSource
+      | undefined;
+
+    if (existingSource) {
+      existingSource.updateImage({
+        url: changeHeatmapUrl,
+        coordinates: changeHeatmapBounds,
+      });
+    } else {
+      map.addSource(sourceId, {
+        type: "image",
+        url: changeHeatmapUrl,
+        coordinates: changeHeatmapBounds,
+      });
+
+      const beforeId = map.getLayer(SELECTION_FILL)
+        ? SELECTION_FILL
+        : undefined;
+
+      map.addLayer(
+        {
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": 0.82,
+            "raster-fade-duration": 0,
+          },
+        },
+        beforeId
+      );
+    }
+  }, [changeHeatmapUrl, changeHeatmapBounds]);
+
+  // =====================================================
   // NDVI EVIDENCE OVERLAY
   // =====================================================
 
@@ -734,6 +797,29 @@ export default function SatelliteMap({
           <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.9)]" />
         </div>
       </div>
+
+
+      {changeHeatmapUrl && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-xl border border-amber-300/20 bg-black/85 backdrop-blur-xl px-4 py-3 shadow-xl">
+          <div className="text-[9px] uppercase tracking-widest text-gray-400 mb-2">
+            Change Heatmap
+          </div>
+          <div className="flex items-center gap-4 text-[9px] text-gray-400">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-red-500" />
+              Decrease
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-gray-300" />
+              Little / no change
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-green-400" />
+              Increase
+            </div>
+          </div>
+        </div>
+      )}
 
       {evidenceUrl && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl px-4 py-3 shadow-xl">

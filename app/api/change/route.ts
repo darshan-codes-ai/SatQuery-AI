@@ -141,11 +141,11 @@ function dayWindow(dateString: string, days = 15) {
   };
 }
 
-async function findBestScene(
+async function findCandidateScenes(
   accessToken: string,
   geometry: Geometry,
   targetDate: string
-): Promise<CatalogFeature | null> {
+): Promise<CatalogFeature[]> {
   const { from, to, target } = dayWindow(targetDate, 30);
 
   const response = await fetch(CATALOG_URL, {
@@ -188,14 +188,15 @@ async function findBestScene(
     const diffA = Math.abs(dateA - target.getTime());
     const diffB = Math.abs(dateB - target.getTime());
 
-    // Prefer scenes reasonably close to target date, then cloudiness.
+    // Prefer scenes close to the requested date, while still
+    // allowing lower-cloud scenes to win when dates are similar.
     const scoreA = diffA / (24 * 60 * 60 * 1000) * 0.5 + cloudA;
     const scoreB = diffB / (24 * 60 * 60 * 1000) * 0.5 + cloudB;
 
     return scoreA - scoreB;
   });
 
-  return features[0] ?? null;
+  return features;
 }
 
 const EVALSCRIPT = `
@@ -341,27 +342,72 @@ async function analyzeDate(
   targetDate: string
 ) {
   const { target } = dayWindow(targetDate, 30);
-  const scene = await findBestScene(accessToken, geometry, targetDate);
+  const scenes = await findCandidateScenes(
+    accessToken,
+    geometry,
+    targetDate
+  );
 
-  if (!scene) {
+  if (scenes.length === 0) {
     throw new Error(`No Sentinel-2 scene was found near ${targetDate}.`);
   }
 
-  const statistics = await getStatsForScene(accessToken, geometry, scene);
-  const observation = extractObservation(statistics);
+  // A catalog hit does not guarantee usable pixels. Try several
+  // candidate acquisitions until one returns valid statistics.
+  const candidatesToTry = scenes.slice(0, 12);
 
-  if (!observation) {
-    throw new Error(`The Sentinel-2 scene near ${targetDate} had no valid statistics.`);
+  let lastError = "no valid statistics";
+
+  for (const scene of candidatesToTry) {
+    try {
+      console.log("Trying change-analysis scene:", {
+        targetDate,
+        sceneId: scene.id,
+        acquisitionDate: scene.properties?.datetime,
+        cloudCoverage: scene.properties?.["eo:cloud_cover"],
+      });
+
+      const statistics = await getStatsForScene(
+        accessToken,
+        geometry,
+        scene
+      );
+
+      const observation = extractObservation(statistics);
+
+      if (!observation) {
+        lastError = `scene ${scene.id ?? "unknown"} returned no valid statistics`;
+        continue;
+      }
+
+      return {
+        ...observation,
+        targetDate,
+        targetTimestamp: target.toISOString(),
+        acquisitionDate: scene.properties?.datetime ?? null,
+        cloudCoverage: toNumber(
+          scene.properties?.["eo:cloud_cover"],
+          0
+        ),
+        sceneId: scene.id ?? null,
+      };
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error.message
+          : "scene statistics request failed";
+
+      console.warn(
+        "Skipping unusable change-analysis scene:",
+        scene.id,
+        lastError
+      );
+    }
   }
 
-  return {
-    ...observation,
-    targetDate,
-    targetTimestamp: target.toISOString(),
-    acquisitionDate: scene.properties?.datetime ?? null,
-    cloudCoverage: toNumber(scene.properties?.["eo:cloud_cover"], 0),
-    sceneId: scene.id ?? null,
-  };
+  throw new Error(
+    `Sentinel-2 scenes near ${targetDate} were found, but none returned valid statistics. Last issue: ${lastError}`
+  );
 }
 
 function percentageChange(before: number, after: number): number {
