@@ -110,6 +110,48 @@ export default function AnalyzePage() {
   const [isAreaStatsLoading, setIsAreaStatsLoading] = useState(false);
   const [areaStatsError, setAreaStatsError] = useState("");
 
+  // =========================================================
+  // CHANGE DETECTION
+  // =========================================================
+
+  type ChangeResults = {
+    before: {
+      ndvi: number;
+      ndwi: number;
+      ndbi: number;
+    };
+    after: {
+      ndvi: number;
+      ndwi: number;
+      ndbi: number;
+    };
+    change: {
+      ndvi: number;
+      ndwi: number;
+      ndbi: number;
+    };
+    beforeDate: string;
+    afterDate: string;
+    beforeAcquisitionDate?: string | null;
+    afterAcquisitionDate?: string | null;
+    summary?: string;
+  };
+
+  const [beforeDate, setBeforeDate] =
+    useState("2025-08-31");
+
+  const [afterDate, setAfterDate] =
+    useState("2026-08-31");
+
+  const [isChangeAnalyzing, setIsChangeAnalyzing] =
+    useState(false);
+
+  const [changeResults, setChangeResults] =
+    useState<ChangeResults | null>(null);
+
+  const [changeError, setChangeError] =
+    useState("");
+
   const evidenceValue =
     evidenceIndex === "ndvi"
       ? analysisResults.ndvi
@@ -432,11 +474,89 @@ export default function AnalyzePage() {
     }
   };
 
+  const runChangeAnalysis = async () => {
+    if (isChangeAnalyzing) return;
+
+    if (!selection) {
+      setChangeError("Please select an area first.");
+      return;
+    }
+
+    if (!beforeDate || !afterDate) {
+      setChangeError("Please select both dates.");
+      return;
+    }
+
+    if (beforeDate >= afterDate) {
+      setChangeError("The Before date must be earlier than the After date.");
+      return;
+    }
+
+    setIsChangeAnalyzing(true);
+    setChangeError("");
+
+    try {
+      const response = await fetch("/api/change", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          coordinates: selectedCoordinates,
+          selection,
+          beforeDate,
+          afterDate,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.success) {
+        throw new Error(
+          data?.error || "Change analysis could not be completed."
+        );
+      }
+
+      setChangeResults(data as ChangeResults);
+
+      if (data.summary) {
+        setMessages((previous) => [
+          ...previous,
+          {
+            role: "ai",
+            text: data.summary,
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error(
+        "SatQuery change analysis error:",
+        error
+      );
+
+      setChangeError(
+        error instanceof Error
+          ? error.message
+          : "Change analysis could not be completed."
+      );
+
+      setChangeResults(null);
+    } finally {
+      setIsChangeAnalyzing(false);
+    }
+  };
+
+  const clearChangeResults = () => {
+    setChangeResults(null);
+    setChangeError("");
+  };
+
   const handleSelectionChange = (nextSelection: SelectionGeometry) => {
     setSelection(nextSelection);
     clearEvidence();
     setAreaStats(null);
     setAreaStatsError("");
+    clearChangeResults();
   };
 
   // =========================================================
@@ -1463,6 +1583,162 @@ export default function AnalyzePage() {
             </div>
           )}
 
+
+          {/* =================================================
+              CHANGE DETECTION
+          ================================================= */}
+
+          {analysisStarted && (
+            <div className="px-5 pb-5">
+              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Calendar size={15} className="text-amber-300" />
+                      <span className="text-xs font-semibold">CHANGE DETECTION</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-gray-500">
+                      Compare Sentinel-2 observations for the same selected area across two dates.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-2 block text-[9px] uppercase tracking-widest text-gray-500">
+                      Before
+                    </label>
+                    <input
+                      type="date"
+                      value={beforeDate}
+                      max={afterDate || undefined}
+                      onChange={(event) => {
+                        setBeforeDate(event.target.value);
+                        clearChangeResults();
+                      }}
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/30"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-[9px] uppercase tracking-widest text-gray-500">
+                      After
+                    </label>
+                    <input
+                      type="date"
+                      value={afterDate}
+                      min={beforeDate || undefined}
+                      onChange={(event) => {
+                        setAfterDate(event.target.value);
+                        clearChangeResults();
+                      }}
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/30"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={runChangeAnalysis}
+                  disabled={isChangeAnalyzing || !selection}
+                  className="mt-4 w-full rounded-lg border border-amber-400/20 bg-amber-400/[0.05] py-2.5 text-xs text-gray-300 transition hover:bg-amber-400/[0.1] disabled:opacity-50"
+                >
+                  {isChangeAnalyzing
+                    ? "Analyzing Change..."
+                    : "Analyze Change"}
+                </button>
+
+                {changeError && (
+                  <p className="mt-3 text-[10px] leading-relaxed text-red-300">
+                    {changeError}
+                  </p>
+                )}
+
+                {changeResults && (
+                  <div className="mt-4 space-y-2">
+                    <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                      Comparison Results
+                    </div>
+
+                    {([
+                      [
+                        "NDVI",
+                        changeResults.before.ndvi,
+                        changeResults.after.ndvi,
+                        changeResults.change.ndvi,
+                      ],
+                      [
+                        "NDWI",
+                        changeResults.before.ndwi,
+                        changeResults.after.ndwi,
+                        changeResults.change.ndwi,
+                      ],
+                      [
+                        "NDBI",
+                        changeResults.before.ndbi,
+                        changeResults.after.ndbi,
+                        changeResults.change.ndbi,
+                      ],
+                    ] as const).map(([label, before, after, change]) => (
+                      <div
+                        key={label}
+                        className="rounded-xl border border-white/10 bg-white/[0.02] p-3"
+                      >
+                        <div className="text-xs font-medium">
+                          {label}
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-3 gap-2">
+                          <div>
+                            <div className="text-[9px] text-gray-500">BEFORE</div>
+                            <div className="mt-1 text-sm font-bold text-white">
+                              {Number(before).toFixed(2)}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[9px] text-gray-500">AFTER</div>
+                            <div className="mt-1 text-sm font-bold text-white">
+                              {Number(after).toFixed(2)}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[9px] text-gray-500">CHANGE</div>
+                            <div
+                              className={`mt-1 text-sm font-bold ${
+                                Number(change) >= 0
+                                  ? "text-emerald-400"
+                                  : "text-red-400"
+                              }`}
+                            >
+                              {Number(change) > 0 ? "+" : ""}
+                              {Number(change).toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {(changeResults.beforeAcquisitionDate ||
+                      changeResults.afterAcquisitionDate) && (
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3 text-[9px] leading-relaxed text-gray-600">
+                        Before acquisition: {changeResults.beforeAcquisitionDate ?? "N/A"}
+                        <br />
+                        After acquisition: {changeResults.afterAcquisitionDate ?? "N/A"}
+                      </div>
+                    )}
+
+                    {changeResults.summary && (
+                      <div className="rounded-xl border border-amber-400/10 bg-amber-400/[0.03] p-3 text-[10px] leading-relaxed text-gray-400">
+                        {changeResults.summary}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* =================================================
               QUERY INPUT
