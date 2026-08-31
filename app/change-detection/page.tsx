@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
-  ChevronRight,
   Layers,
   MapPin,
   Satellite,
@@ -63,10 +62,23 @@ export default function ChangeDetectionPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<ChangeResults | null>(null);
+  const [heatmapIndex, setHeatmapIndex] = useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
+  const [changeHeatmapUrl, setChangeHeatmapUrl] = useState<string | null>(null);
+  const [changeHeatmapBounds, setChangeHeatmapBounds] = useState<
+    [[number, number], [number, number], [number, number], [number, number]] | null
+  >(null);
+  const [isHeatmapLoading, setIsHeatmapLoading] = useState(false);
+  const [heatmapError, setHeatmapError] = useState("");
 
   const runChangeAnalysis = async () => {
     setError("");
     setResults(null);
+    setHeatmapError("");
+    setChangeHeatmapUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+    setChangeHeatmapBounds(null);
 
     if (beforeDate >= afterDate) {
       setError("The Before date must be earlier than the After date.");
@@ -110,11 +122,95 @@ export default function ChangeDetectionPage() {
     }
   };
 
+  const getHeatmapBounds = () => {
+    if (selection.type === "Point") {
+      const [lng, lat] = selection.coordinates;
+      const size = 0.0025;
+      return [
+        [lng - size, lat + size],
+        [lng + size, lat + size],
+        [lng + size, lat - size],
+        [lng - size, lat - size],
+      ] as [[number, number], [number, number], [number, number], [number, number]];
+    }
+
+    const ring = selection.coordinates[0] ?? [];
+    const lngs = ring.map(([lng]) => lng);
+    const lats = ring.map(([, lat]) => lat);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+
+    return [
+      [minLng, maxLat],
+      [maxLng, maxLat],
+      [maxLng, minLat],
+      [minLng, minLat],
+    ] as [[number, number], [number, number], [number, number], [number, number]];
+  };
+
+  const showChangeHeatmap = async () => {
+    if (!results || isHeatmapLoading) return;
+
+    setIsHeatmapLoading(true);
+    setHeatmapError("");
+
+    try {
+      const geometry = encodeURIComponent(JSON.stringify(selection));
+      const beforeObservation = results.beforeAcquisitionDate
+        ? `&beforeObservationDate=${encodeURIComponent(results.beforeAcquisitionDate)}`
+        : "";
+      const afterObservation = results.afterAcquisitionDate
+        ? `&afterObservationDate=${encodeURIComponent(results.afterAcquisitionDate)}`
+        : "";
+
+      const response = await fetch(
+        `/api/change-evidence?index=${heatmapIndex}&geometry=${geometry}&beforeDate=${encodeURIComponent(beforeDate)}&afterDate=${encodeURIComponent(afterDate)}${beforeObservation}${afterObservation}`,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(
+          data?.error || "Change heatmap could not be generated."
+        );
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      setChangeHeatmapUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return objectUrl;
+      });
+      setChangeHeatmapBounds(getHeatmapBounds());
+    } catch (err) {
+      console.error("SatQuery change heatmap error:", err);
+      setHeatmapError(
+        err instanceof Error
+          ? err.message
+          : "Change heatmap could not be generated."
+      );
+    } finally {
+      setIsHeatmapLoading(false);
+    }
+  };
+
+  const clearHeatmap = () => {
+    setHeatmapError("");
+    setChangeHeatmapBounds(null);
+    setChangeHeatmapUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+  };
+
   const metrics = results
     ? [
-        ["NDVI", results.before.ndvi, results.after.ndvi, results.change.ndvi],
-        ["NDWI", results.before.ndwi, results.after.ndwi, results.change.ndwi],
-        ["NDBI", results.before.ndbi, results.after.ndbi, results.change.ndbi],
+        ["NDVI", results.before.ndvi, results.after.ndvi, results.deltas?.ndvi ?? (results.after.ndvi - results.before.ndvi)],
+        ["NDWI", results.before.ndwi, results.after.ndwi, results.deltas?.ndwi ?? (results.after.ndwi - results.before.ndwi)],
+        ["NDBI", results.before.ndbi, results.after.ndbi, results.deltas?.ndbi ?? (results.after.ndbi - results.before.ndbi)],
       ]
     : [];
 
@@ -180,7 +276,12 @@ export default function ChangeDetectionPage() {
           <div className="relative h-[520px] lg:h-[calc(100vh-390px)] min-h-[500px] bg-[#07111c] overflow-hidden">
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
-              onSelectionChange={setSelection}
+              onSelectionChange={(next) => {
+                setSelection(next);
+                clearHeatmap();
+              }}
+              changeHeatmapUrl={changeHeatmapUrl}
+              changeHeatmapBounds={changeHeatmapBounds}
             />
           </div>
 
@@ -268,17 +369,17 @@ export default function ChangeDetectionPage() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  {metrics.map(([label, before, after, change]) => (
+                  {metrics.map(([label, before, after, delta]) => (
                     <div key={String(label)} className="rounded-xl border border-white/5 bg-black/20 p-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold">{label}</span>
-                        <span className={`flex items-center gap-1 text-[10px] font-semibold ${Number(change) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          {Number(change) >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                          {Number(change) > 0 ? "+" : ""}{Number(change).toFixed(1)}%
+                        <span className={`flex items-center gap-1 text-[10px] font-semibold ${Number(delta) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {Number(delta) >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                          {Number(delta) > 0 ? "+" : ""}{Number(delta).toFixed(2)}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 mt-3">
+                      <div className="grid grid-cols-3 gap-3 mt-3">
                         <div>
                           <div className="text-[9px] text-gray-600 uppercase tracking-wider">Before</div>
                           <div className="mt-1 text-lg font-bold">{Number(before).toFixed(2)}</div>
@@ -287,6 +388,16 @@ export default function ChangeDetectionPage() {
                           <div className="text-[9px] text-gray-600 uppercase tracking-wider">After</div>
                           <div className="mt-1 text-lg font-bold">{Number(after).toFixed(2)}</div>
                         </div>
+                        <div>
+                          <div className="text-[9px] text-gray-600 uppercase tracking-wider">Δ Index</div>
+                          <div className={`mt-1 text-lg font-bold ${Number(delta) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            {Number(delta) > 0 ? "+" : ""}{Number(delta).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-[9px] text-gray-600">
+                        {Number(delta) > 0 ? "Index signal increased" : Number(delta) < 0 ? "Index signal decreased" : "No material index change"}
                       </div>
                     </div>
                   ))}
@@ -303,22 +414,90 @@ export default function ChangeDetectionPage() {
                   <div>After cloud cover: {results.afterCloudCoverage ?? "N/A"}%</div>
                 </div>
 
+                <p className="mt-3 text-[9px] leading-relaxed text-gray-600">
+                  Change is shown as an index-point delta (After − Before). Relative percentages are intentionally not emphasized because they become unstable when the baseline index is close to zero.
+                </p>
+
                 {results.note && (
                   <p className="mt-3 text-[9px] leading-relaxed text-gray-700">{results.note}</p>
                 )}
               </div>
             )}
 
-            <div className="rounded-2xl border border-cyan-400/10 bg-cyan-400/[0.02] p-4">
-              <div className="text-xs font-semibold">Next step</div>
-              <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                The next upgrade is a pixel-level change heatmap showing exactly where vegetation, water, or built-up signals increased or decreased.
-              </p>
-              <div className="mt-3 flex items-center gap-2 text-[10px] text-cyan-300">
-                <ChevronRight size={13} />
-                Spatial change evidence
+            {results && (
+              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Layers size={15} className="text-cyan-400" />
+                      <span className="text-xs font-semibold">CHANGE HEATMAP</span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+                      Compare the selected index pixel-by-pixel between the two satellite observations.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  {([
+                    ["ndvi", "NDVI"],
+                    ["ndwi", "NDWI"],
+                    ["ndbi", "NDBI"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setHeatmapIndex(value);
+                        clearHeatmap();
+                      }}
+                      className={`rounded-lg border px-3 py-2 text-[10px] transition ${
+                        heatmapIndex === value
+                          ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                          : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={showChangeHeatmap}
+                  disabled={isHeatmapLoading}
+                  className="mt-3 w-full rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] py-2.5 text-xs text-gray-300 transition hover:bg-cyan-400/[0.09] disabled:opacity-50"
+                >
+                  {isHeatmapLoading
+                    ? `Generating ${heatmapIndex.toUpperCase()} heatmap...`
+                    : changeHeatmapUrl
+                      ? `Refresh ${heatmapIndex.toUpperCase()} Heatmap`
+                      : `Show ${heatmapIndex.toUpperCase()} Change Heatmap`}
+                </button>
+
+                {changeHeatmapUrl && (
+                  <button
+                    type="button"
+                    onClick={clearHeatmap}
+                    className="mt-2 w-full rounded-lg border border-white/10 bg-white/[0.02] py-2 text-[10px] text-gray-500 hover:text-gray-300 hover:bg-white/5 transition"
+                  >
+                    Hide Change Heatmap
+                  </button>
+                )}
+
+                {heatmapError && (
+                  <div className="mt-3 rounded-lg border border-red-400/20 bg-red-400/[0.04] p-3 text-[10px] leading-relaxed text-red-300">
+                    {heatmapError}
+                  </div>
+                )}
+
+                <div className="mt-3 flex items-center gap-4 text-[9px] text-gray-500">
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-red-500" />Decrease</span>
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-gray-300" />Stable</span>
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-green-400" />Increase</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </aside>
       </div>

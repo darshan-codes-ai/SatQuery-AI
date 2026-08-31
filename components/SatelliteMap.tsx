@@ -512,8 +512,10 @@ export default function SatelliteMap({
         coordinates: changeHeatmapBounds,
       });
 
-      const beforeId = map.getLayer(SELECTION_FILL)
-        ? SELECTION_FILL
+      // Put the heatmap above the selection fill so the changes remain
+      // clearly visible, but keep the selection outline above the heatmap.
+      const beforeId = map.getLayer(SELECTION_LINE)
+        ? SELECTION_LINE
         : undefined;
 
       map.addLayer(
@@ -522,7 +524,8 @@ export default function SatelliteMap({
           type: "raster",
           source: sourceId,
           paint: {
-            "raster-opacity": 0.82,
+            "raster-opacity": 1,
+            "raster-resampling": "nearest",
             "raster-fade-duration": 0,
           },
         },

@@ -184,16 +184,19 @@ function exactDayWindow(dateString: string) {
 async function findScene(
   accessToken: string,
   geometry: Geometry,
-  dateString: string
+  dateString: string,
+  exactObservationDate?: string | null
 ): Promise<CatalogFeature | null> {
-  const parsed = new Date(dateString);
+  const parsed = new Date(exactObservationDate || dateString);
   if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`Invalid scene date: ${dateString}`);
+    throw new Error(`Invalid scene date: ${exactObservationDate || dateString}`);
   }
 
-  // Keep a small fallback window around the actual acquisition date.
-  const from = new Date(parsed.getTime() - 36 * 60 * 60 * 1000);
-  const to = new Date(parsed.getTime() + 36 * 60 * 60 * 1000);
+  // Prefer the exact acquisition date returned by the working
+  // comparison API. Fall back to a small target-date window.
+  const windowHours = exactObservationDate ? 12 : 36;
+  const from = new Date(parsed.getTime() - windowHours * 60 * 60 * 1000);
+  const to = new Date(parsed.getTime() + windowHours * 60 * 60 * 1000);
 
   const response = await fetch(CATALOG_URL, {
     method: "POST",
@@ -261,7 +264,7 @@ function setup() {
     ],
     output: {
       bands: 4,
-      sampleType: "AUTO"
+      sampleType: "FLOAT32"
     }
   };
 }
@@ -278,7 +281,7 @@ function valid(sample) {
     sample.SCL !== 11;
 }
 
-function safeIndex(type, sample) {
+function indexValue(type, sample) {
   if (!valid(sample)) return NaN;
 
   let a;
@@ -301,42 +304,42 @@ function safeIndex(type, sample) {
 }
 
 function evaluatePixel(samples) {
-  const before = samples.before && samples.before.length
-    ? samples.before[0]
-    : null;
+  const before = samples.before && samples.before.length ? samples.before[0] : null;
+  const after = samples.after && samples.after.length ? samples.after[0] : null;
 
-  const after = samples.after && samples.after.length
-    ? samples.after[0]
-    : null;
+  const b = indexValue("__INDEX__", before);
+  const a = indexValue("__INDEX__", after);
 
-  const beforeValue = safeIndex("__INDEX__", before);
-  const afterValue = safeIndex("__INDEX__", after);
-
-  if (!isFinite(beforeValue) || !isFinite(afterValue)) {
+  if (!isFinite(b) || !isFinite(a)) {
     return [0, 0, 0, 0];
   }
 
-  const delta = afterValue - beforeValue;
-  const stableThreshold = 0.03;
-  const maxDelta = 0.30;
+  const delta = a - b;
+  const absDelta = Math.abs(delta);
 
-  if (Math.abs(delta) <= stableThreshold) {
-    return [0.82, 0.82, 0.82, 0.30];
+  // Only show meaningful index changes. This suppresses
+  // most single-pixel noise caused by illumination, registration,
+  // seasonal effects and small reflectance fluctuations.
+  const weak = 0.08;
+  const strong = 0.18;
+
+  if (absDelta < weak) {
+    return [0, 0, 0, 0];
   }
 
-  const intensity = Math.min(1, Math.max(0,
-    (Math.abs(delta) - stableThreshold) /
-    (maxDelta - stableThreshold)
+  const strength = Math.min(1, Math.max(0,
+    (absDelta - weak) / (strong - weak)
   ));
 
-  const alpha = 0.40 + intensity * 0.50;
+  // Two clear visual classes, with opacity tied to magnitude.
+  // Decrease = red, increase = green.
+  const alpha = 0.78 + 0.22 * strength;
 
-  // Increase = green, decrease = red.
-  if (delta > 0) {
-    return [0.10, 1.0, 0.25, alpha];
+  if (delta < 0) {
+    return [0.95, 0.04, 0.10, alpha];
   }
 
-  return [1.0, 0.12, 0.12, alpha];
+  return [0.02, 0.85, 0.22, alpha];
 }
 `;
 
@@ -345,18 +348,22 @@ async function renderHeatmap(
   geometry: Geometry,
   beforeDate: string,
   afterDate: string,
-  index: "ndvi" | "ndwi" | "ndbi"
+  index: "ndvi" | "ndwi" | "ndbi",
+  beforeObservationDate?: string | null,
+  afterObservationDate?: string | null
 ) {
   const beforeScene = await findScene(
     accessToken,
     geometry,
-    beforeDate
+    beforeDate,
+    beforeObservationDate
   );
 
   const afterScene = await findScene(
     accessToken,
     geometry,
-    afterDate
+    afterDate,
+    afterObservationDate
   );
 
   if (!beforeScene) {
@@ -466,6 +473,8 @@ export async function GET(request: Request) {
     const beforeDate = url.searchParams.get("beforeDate");
     const afterDate = url.searchParams.get("afterDate");
     const index = url.searchParams.get("index");
+    const beforeObservationDate = url.searchParams.get("beforeObservationDate");
+    const afterObservationDate = url.searchParams.get("afterObservationDate");
 
     if (!geometryRaw || !beforeDate || !afterDate) {
       return NextResponse.json(
@@ -511,7 +520,9 @@ export async function GET(request: Request) {
       geometry,
       beforeDate,
       afterDate,
-      index
+      index,
+      beforeObservationDate,
+      afterObservationDate
     );
 
     return new NextResponse(result.image, {
