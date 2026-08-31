@@ -1,7 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import SatelliteMap from "@/components/SatelliteMap";
+import TopNav from "@/components/TopNav";
+
+type SelectionGeometry =
+  | {
+      type: "Point";
+      coordinates: [number, number];
+    }
+  | {
+      type: "Polygon";
+      coordinates: [number, number][][];
+    };
+
+
 
 import {
   Activity,
@@ -31,50 +45,13 @@ export default function AnalyzePage() {
   // User's text query
   const [query, setQuery] = useState("");
 
-  type SelectionGeometry =
-    | {
-        type: "Point";
-        coordinates: [number, number];
-      }
-    | {
-        type: "Polygon";
-        coordinates: [number, number][][];
-      };
-
-  type AreaStats = {
-    area: {
-      km2: number;
-      hectares: number;
-    };
-    coverage: {
-      validDataPercent: number;
-      geometryPixelCount: number;
-      sampleCount: number;
-      noDataCount: number;
-    };
-    estimatedBreakdown: {
-      vegetationPercent: number;
-      waterPercent: number;
-      builtupPercent: number;
-      otherPercent: number;
-      vegetationHa: number;
-      waterHa: number;
-      builtupHa: number;
-      otherHa: number;
-    };
-    acquisitionDate: string | null;
-    note: string;
-  };
-
   const [selectedCoordinates, setSelectedCoordinates] = useState({
-  lat: 21.1938,
-  lng: 81.3509,
-    }); 
-
-  const [selection, setSelection] = useState<SelectionGeometry>({
-    type: "Point",
-    coordinates: [81.3509, 21.1938],
+    lat: 21.1938,
+    lng: 81.3509,
   });
+
+  const [selection, setSelection] =
+    useState<SelectionGeometry | null>(null);
     
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
@@ -90,81 +67,6 @@ export default function AnalyzePage() {
 
   // Whether analysis has been performed
   const [analysisStarted, setAnalysisStarted] = useState(false);
-
-  // NDVI evidence overlay
-  const [evidenceUrl, setEvidenceUrl] = useState<string | null>(null);
-  const [evidenceBounds, setEvidenceBounds] = useState<
-    [
-      [number, number],
-      [number, number],
-      [number, number],
-      [number, number]
-    ] | null
-  >(null);
-  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
-  const [evidenceError, setEvidenceError] = useState("");
-  const [evidenceIndex, setEvidenceIndex] = useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
-  const [evidenceDate, setEvidenceDate] = useState<string | null>(null);
-
-  const [areaStats, setAreaStats] = useState<AreaStats | null>(null);
-  const [isAreaStatsLoading, setIsAreaStatsLoading] = useState(false);
-  const [areaStatsError, setAreaStatsError] = useState("");
-
-  // =========================================================
-  // CHANGE DETECTION
-  // =========================================================
-
-  type ChangeResults = {
-    before: {
-      ndvi: number;
-      ndwi: number;
-      ndbi: number;
-    };
-    after: {
-      ndvi: number;
-      ndwi: number;
-      ndbi: number;
-    };
-    change: {
-      ndvi: number;
-      ndwi: number;
-      ndbi: number;
-    };
-    beforeDate: string;
-    afterDate: string;
-    beforeAcquisitionDate?: string | null;
-    afterAcquisitionDate?: string | null;
-    summary?: string;
-  };
-
-  const [beforeDate, setBeforeDate] =
-    useState("2025-08-31");
-
-  const [afterDate, setAfterDate] =
-    useState("2026-08-31");
-
-  const [isChangeAnalyzing, setIsChangeAnalyzing] =
-    useState(false);
-
-  const [changeResults, setChangeResults] =
-    useState<ChangeResults | null>(null);
-
-  const [changeError, setChangeError] =
-    useState("");
-
-  const evidenceValue =
-    evidenceIndex === "ndvi"
-      ? analysisResults.ndvi
-      : evidenceIndex === "ndwi"
-        ? analysisResults.ndwi
-        : analysisResults.ndbi;
-
-  const evidenceLabel =
-    evidenceIndex === "ndvi"
-      ? "NDVI"
-      : evidenceIndex === "ndwi"
-        ? "NDWI"
-        : "NDBI";
 
   // Uploaded image preview
   const [uploadedImage, setUploadedImage] =
@@ -272,6 +174,26 @@ export default function AnalyzePage() {
   setQuery("");
   setIsAnalyzing(true);
 
+  if (
+    !selectedCoordinates ||
+    !Number.isFinite(Number(selectedCoordinates.lat)) ||
+    !Number.isFinite(Number(selectedCoordinates.lng)) ||
+    Number(selectedCoordinates.lat) < -90 ||
+    Number(selectedCoordinates.lat) > 90 ||
+    Number(selectedCoordinates.lng) < -180 ||
+    Number(selectedCoordinates.lng) > 180
+  ) {
+    setIsAnalyzing(false);
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "ai",
+        text: "Please select a valid location on the map first.",
+      },
+    ]);
+    return;
+  }
+
   try {
     const response = await fetch("/api/analyze", {
       method: "POST",
@@ -280,11 +202,26 @@ export default function AnalyzePage() {
       },
       body: JSON.stringify({
         query: text.trim(),
+
+        // Keep the canonical object used by the current API.
         coordinates: {
-          lat: selectedCoordinates.lat,
-          lng: selectedCoordinates.lng,
+          lat: Number(selectedCoordinates.lat),
+          lng: Number(selectedCoordinates.lng),
         },
+
+        // Also send root-level coordinates for compatibility with
+        // older/local API implementations.
+        lat: Number(selectedCoordinates.lat),
+        lng: Number(selectedCoordinates.lng),
+
+        // Preserve the selected point / rectangle / polygon.
         selection,
+
+        // Backward-compatible alias.
+        selectedCoordinates: {
+          lat: Number(selectedCoordinates.lat),
+          lng: Number(selectedCoordinates.lng),
+        },
       }),
     });
 
@@ -312,12 +249,6 @@ export default function AnalyzePage() {
       confidence: data.confidence,
     });
 
-    if (data.analysis?.type === "ndvi" || data.analysis?.type === "ndwi" || data.analysis?.type === "ndbi") {
-      setEvidenceIndex(data.analysis.type);
-      setEvidenceError("");
-    }
-
-    setEvidenceDate(data.metadata?.acquisitionDate ?? null);
     setAnalysisStarted(true);
   } catch (error) {
     console.error(
@@ -338,227 +269,6 @@ export default function AnalyzePage() {
   }
 };
 
-  const clearEvidence = () => {
-    setEvidenceError("");
-    setEvidenceBounds(null);
-    setEvidenceUrl((previous) => {
-      if (previous) URL.revokeObjectURL(previous);
-      return null;
-    });
-  };
-
-  const getEvidenceBounds = (): [
-    [number, number],
-    [number, number],
-    [number, number],
-    [number, number]
-  ] => {
-    if (selection.type === "Point") {
-      const [lng, lat] = selection.coordinates;
-      const size = 0.0025;
-
-      return [
-        [lng - size, lat + size],
-        [lng + size, lat + size],
-        [lng + size, lat - size],
-        [lng - size, lat - size],
-      ];
-    }
-
-    const ring = selection.coordinates[0] ?? [];
-    const longitudes = ring.map(([lng]) => lng);
-    const latitudes = ring.map(([, lat]) => lat);
-
-    const minLng = Math.min(...longitudes);
-    const maxLng = Math.max(...longitudes);
-    const minLat = Math.min(...latitudes);
-    const maxLat = Math.max(...latitudes);
-
-    return [
-      [minLng, maxLat],
-      [maxLng, maxLat],
-      [maxLng, minLat],
-      [minLng, minLat],
-    ];
-  };
-
-  const showEvidenceOnMap = async () => {
-    if (isEvidenceLoading) return;
-
-    setIsEvidenceLoading(true);
-    setEvidenceError("");
-
-    try {
-      const geometry = encodeURIComponent(
-        JSON.stringify(selection)
-      );
-
-      const dateParam = evidenceDate
-        ? `&date=${encodeURIComponent(evidenceDate)}`
-        : "";
-
-      const response = await fetch(
-        `/api/evidence?index=${evidenceIndex}&geometry=${geometry}${dateParam}`,
-        { cache: "no-store" }
-      );
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        throw new Error(
-          data?.error || "Evidence image could not be generated."
-        );
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-
-      setEvidenceUrl((previous) => {
-        if (previous) URL.revokeObjectURL(previous);
-        return objectUrl;
-      });
-
-      setEvidenceBounds(getEvidenceBounds());
-    } catch (error) {
-      console.error("SatQuery evidence error:", error);
-      setEvidenceError(
-        error instanceof Error
-          ? error.message
-          : "Could not show evidence on the map."
-      );
-    } finally {
-      setIsEvidenceLoading(false);
-    }
-  };
-
-  const loadAreaStats = async () => {
-    if (isAreaStatsLoading || !analysisStarted) return;
-
-    setIsAreaStatsLoading(true);
-    setAreaStatsError("");
-
-    try {
-      const geometry = encodeURIComponent(
-        JSON.stringify(selection)
-      );
-
-      const dateParam = evidenceDate
-        ? `&date=${encodeURIComponent(evidenceDate)}`
-        : "";
-
-      const response = await fetch(
-        `/api/area-stats?geometry=${geometry}${dateParam}`,
-        { cache: "no-store" }
-      );
-
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok || !data?.success) {
-        throw new Error(
-          data?.error || "Area statistics could not be calculated."
-        );
-      }
-
-      setAreaStats(data as AreaStats);
-    } catch (error) {
-      console.error(
-        "SatQuery area statistics error:",
-        error
-      );
-      setAreaStatsError(
-        error instanceof Error
-          ? error.message
-          : "Could not calculate area statistics."
-      );
-    } finally {
-      setIsAreaStatsLoading(false);
-    }
-  };
-
-  const runChangeAnalysis = async () => {
-    if (isChangeAnalyzing) return;
-
-    if (!selection) {
-      setChangeError("Please select an area first.");
-      return;
-    }
-
-    if (!beforeDate || !afterDate) {
-      setChangeError("Please select both dates.");
-      return;
-    }
-
-    if (beforeDate >= afterDate) {
-      setChangeError("The Before date must be earlier than the After date.");
-      return;
-    }
-
-    setIsChangeAnalyzing(true);
-    setChangeError("");
-
-    try {
-      const response = await fetch("/api/change", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          coordinates: selectedCoordinates,
-          selection,
-          beforeDate,
-          afterDate,
-        }),
-      });
-
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok || !data?.success) {
-        throw new Error(
-          data?.error || "Change analysis could not be completed."
-        );
-      }
-
-      setChangeResults(data as ChangeResults);
-
-      if (data.summary) {
-        setMessages((previous) => [
-          ...previous,
-          {
-            role: "ai",
-            text: data.summary,
-          },
-        ]);
-      }
-    } catch (error) {
-      console.error(
-        "SatQuery change analysis error:",
-        error
-      );
-
-      setChangeError(
-        error instanceof Error
-          ? error.message
-          : "Change analysis could not be completed."
-      );
-
-      setChangeResults(null);
-    } finally {
-      setIsChangeAnalyzing(false);
-    }
-  };
-
-  const clearChangeResults = () => {
-    setChangeResults(null);
-    setChangeError("");
-  };
-
-  const handleSelectionChange = (nextSelection: SelectionGeometry) => {
-    setSelection(nextSelection);
-    clearEvidence();
-    setAreaStats(null);
-    setAreaStatsError("");
-    clearChangeResults();
-  };
-
   // =========================================================
   // PAGE
   // =========================================================
@@ -570,7 +280,7 @@ export default function AnalyzePage() {
           HEADER
       ===================================================== */}
 
-      <header className="h-16 border-b border-white/10 bg-[#060b16]/95 backdrop-blur-xl">
+      <header className="relative z-50 h-16 border-b border-white/10 bg-[#060b16]/95 backdrop-blur-xl">
 
         <div className="h-full px-5 flex items-center justify-between">
 
@@ -626,6 +336,11 @@ export default function AnalyzePage() {
             </div>
 
           </a>
+
+
+          {/* NAVIGATION */}
+
+          <TopNav />
 
 
           {/* WORKSPACE STATUS */}
@@ -847,10 +562,7 @@ export default function AnalyzePage() {
 
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
-              onSelectionChange={handleSelectionChange}
-              evidenceUrl={evidenceUrl}
-              evidenceBounds={evidenceBounds}
-              evidenceIndex={evidenceIndex}
+              onSelectionChange={setSelection}
             />
 
           </div>
@@ -907,7 +619,7 @@ export default function AnalyzePage() {
                 icon={<Eye size={17} />}
                 title="Coverage"
                 value={`${analysisResults.coverage.toFixed(1)}%`}
-                subtitle="Valid satellite data"
+                subtitle="Vegetated area"
               />
 
             </div>
@@ -1329,7 +1041,7 @@ export default function AnalyzePage() {
                   >
 
                     <div className="text-[10px] text-gray-500">
-                      {evidenceLabel}
+                      NDVI
                     </div>
 
                     <div
@@ -1340,7 +1052,7 @@ export default function AnalyzePage() {
                         mt-1
                       "
                     >
-                      {evidenceValue.toFixed(2)}
+                      {analysisResults.ndvi.toFixed(2)}
                     </div>
 
                   </div>
@@ -1355,7 +1067,7 @@ export default function AnalyzePage() {
                   >
 
                     <div className="text-[10px] text-gray-500">
-                      DATA QUALITY
+                      CONFIDENCE
                     </div>
 
                     <div
@@ -1389,7 +1101,7 @@ export default function AnalyzePage() {
                   >
 
                     <span>
-                      Valid satellite data
+                      Vegetation coverage
                     </span>
 
                     <span>
@@ -1427,74 +1139,25 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* EVIDENCE INDEX SELECTOR */}
-
-                <div className="mt-4">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Evidence layer</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {([
-                      ["ndvi", "NDVI"],
-                      ["ndwi", "NDWI"],
-                      ["ndbi", "NDBI"],
-                    ] as const).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => {
-                          setEvidenceIndex(value);
-                          clearEvidence();
-                        }}
-                        className={`rounded-lg border px-3 py-2 text-[10px] transition ${
-                          evidenceIndex === value
-                            ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
-                            : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <p className="mt-2 text-[10px] leading-relaxed text-gray-600">
-                    {evidenceIndex === "ndvi" &&
-                      "NDVI: lower values indicate little or stressed vegetation; higher values indicate stronger vegetation signals."}
-                    {evidenceIndex === "ndwi" &&
-                      "NDWI: higher values indicate stronger surface-water signals; interpret near-zero values with the map context."}
-                    {evidenceIndex === "ndbi" &&
-                      "NDBI: higher values indicate stronger built-up signals; this is an index signal, not a definitive land-cover classification."}
-                  </p>
-                </div>
+                {/* SHOW EVIDENCE */}
 
                 <button
-                  onClick={showEvidenceOnMap}
-                  disabled={isEvidenceLoading || !analysisStarted}
                   className="
                     w-full
-                    mt-3
+                    mt-4
                     py-2
                     rounded-lg
                     border
-                    border-cyan-400/20
-                    bg-cyan-400/[0.03]
-                    hover:bg-cyan-400/[0.08]
-                    disabled:opacity-50
+                    border-white/10
+                    hover:bg-white/5
                     text-xs
-                    text-gray-300
-                    transition
+                    text-gray-400
                   "
                 >
-                  {isEvidenceLoading
-                    ? `Generating ${evidenceIndex.toUpperCase()} evidence...`
-                    : evidenceUrl
-                      ? `Refresh ${evidenceIndex.toUpperCase()} Evidence`
-                      : `Show ${evidenceIndex.toUpperCase()} Evidence on Map`}
-                </button>
 
-                {evidenceError && (
-                  <p className="mt-2 text-[10px] text-red-300">
-                    {evidenceError}
-                  </p>
-                )}
+                  Show Evidence on Map
+
+                </button>
 
               </div>
 
@@ -1502,243 +1165,6 @@ export default function AnalyzePage() {
 
           </div>
 
-
-          {/* =================================================
-              AREA STATISTICS
-          ================================================= */}
-
-          {analysisStarted && (
-            <div className="px-5 pb-5">
-              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.03] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <Layers size={15} className="text-cyan-400" />
-                      <span className="text-xs font-semibold">AREA STATISTICS</span>
-                    </div>
-                    <p className="mt-1 text-[10px] text-gray-500">
-                      Estimate the selected area's size and index-based land signals.
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={loadAreaStats}
-                    disabled={isAreaStatsLoading}
-                    className="rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2 text-[10px] text-cyan-300 transition hover:bg-cyan-400/10 disabled:opacity-50"
-                  >
-                    {isAreaStatsLoading ? "Calculating..." : areaStats ? "Refresh" : "Calculate"}
-                  </button>
-                </div>
-
-                {areaStatsError && (
-                  <p className="mt-3 text-[10px] leading-relaxed text-red-300">
-                    {areaStatsError}
-                  </p>
-                )}
-
-                {areaStats && (
-                  <div className="mt-4 space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-xl bg-black/20 p-3">
-                        <div className="text-[9px] uppercase tracking-widest text-gray-500">Area</div>
-                        <div className="mt-1 text-lg font-bold text-white">{areaStats.area.km2.toFixed(3)} km²</div>
-                      </div>
-                      <div className="rounded-xl bg-black/20 p-3">
-                        <div className="text-[9px] uppercase tracking-widest text-gray-500">Hectares</div>
-                        <div className="mt-1 text-lg font-bold text-cyan-300">{areaStats.area.hectares.toFixed(2)} ha</div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Estimated land-signal breakdown</div>
-
-                      <div className="space-y-2">
-                        <BreakdownRow label="Vegetation" percent={areaStats.estimatedBreakdown.vegetationPercent} hectares={areaStats.estimatedBreakdown.vegetationHa} />
-                        <BreakdownRow label="Water" percent={areaStats.estimatedBreakdown.waterPercent} hectares={areaStats.estimatedBreakdown.waterHa} />
-                        <BreakdownRow label="Built-up" percent={areaStats.estimatedBreakdown.builtupPercent} hectares={areaStats.estimatedBreakdown.builtupHa} />
-                        <BreakdownRow label="Other" percent={areaStats.estimatedBreakdown.otherPercent} hectares={areaStats.estimatedBreakdown.otherHa} />
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-                      <div className="flex items-center justify-between text-[10px] text-gray-500">
-                        <span>Valid satellite data</span>
-                        <span>{areaStats.coverage.validDataPercent.toFixed(1)}%</span>
-                      </div>
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className="h-full rounded-full bg-cyan-400"
-                          style={{ width: `${Math.min(100, Math.max(0, areaStats.coverage.validDataPercent))}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <p className="text-[9px] leading-relaxed text-gray-600">
-                      {areaStats.note}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-
-          {/* =================================================
-              CHANGE DETECTION
-          ================================================= */}
-
-          {analysisStarted && (
-            <div className="px-5 pb-5">
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.03] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <Calendar size={15} className="text-amber-300" />
-                      <span className="text-xs font-semibold">CHANGE DETECTION</span>
-                    </div>
-                    <p className="mt-1 text-[10px] text-gray-500">
-                      Compare Sentinel-2 observations for the same selected area across two dates.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-2 block text-[9px] uppercase tracking-widest text-gray-500">
-                      Before
-                    </label>
-                    <input
-                      type="date"
-                      value={beforeDate}
-                      max={afterDate || undefined}
-                      onChange={(event) => {
-                        setBeforeDate(event.target.value);
-                        clearChangeResults();
-                      }}
-                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/30"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-[9px] uppercase tracking-widest text-gray-500">
-                      After
-                    </label>
-                    <input
-                      type="date"
-                      value={afterDate}
-                      min={beforeDate || undefined}
-                      onChange={(event) => {
-                        setAfterDate(event.target.value);
-                        clearChangeResults();
-                      }}
-                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/30"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={runChangeAnalysis}
-                  disabled={isChangeAnalyzing || !selection}
-                  className="mt-4 w-full rounded-lg border border-amber-400/20 bg-amber-400/[0.05] py-2.5 text-xs text-gray-300 transition hover:bg-amber-400/[0.1] disabled:opacity-50"
-                >
-                  {isChangeAnalyzing
-                    ? "Analyzing Change..."
-                    : "Analyze Change"}
-                </button>
-
-                {changeError && (
-                  <p className="mt-3 text-[10px] leading-relaxed text-red-300">
-                    {changeError}
-                  </p>
-                )}
-
-                {changeResults && (
-                  <div className="mt-4 space-y-2">
-                    <div className="text-[10px] uppercase tracking-widest text-gray-500">
-                      Comparison Results
-                    </div>
-
-                    {([
-                      [
-                        "NDVI",
-                        changeResults.before.ndvi,
-                        changeResults.after.ndvi,
-                        changeResults.change.ndvi,
-                      ],
-                      [
-                        "NDWI",
-                        changeResults.before.ndwi,
-                        changeResults.after.ndwi,
-                        changeResults.change.ndwi,
-                      ],
-                      [
-                        "NDBI",
-                        changeResults.before.ndbi,
-                        changeResults.after.ndbi,
-                        changeResults.change.ndbi,
-                      ],
-                    ] as const).map(([label, before, after, change]) => (
-                      <div
-                        key={label}
-                        className="rounded-xl border border-white/10 bg-white/[0.02] p-3"
-                      >
-                        <div className="text-xs font-medium">
-                          {label}
-                        </div>
-
-                        <div className="mt-2 grid grid-cols-3 gap-2">
-                          <div>
-                            <div className="text-[9px] text-gray-500">BEFORE</div>
-                            <div className="mt-1 text-sm font-bold text-white">
-                              {Number(before).toFixed(2)}
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="text-[9px] text-gray-500">AFTER</div>
-                            <div className="mt-1 text-sm font-bold text-white">
-                              {Number(after).toFixed(2)}
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="text-[9px] text-gray-500">CHANGE</div>
-                            <div
-                              className={`mt-1 text-sm font-bold ${
-                                Number(change) >= 0
-                                  ? "text-emerald-400"
-                                  : "text-red-400"
-                              }`}
-                            >
-                              {Number(change) > 0 ? "+" : ""}
-                              {Number(change).toFixed(1)}%
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-
-                    {(changeResults.beforeAcquisitionDate ||
-                      changeResults.afterAcquisitionDate) && (
-                      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3 text-[9px] leading-relaxed text-gray-600">
-                        Before acquisition: {changeResults.beforeAcquisitionDate ?? "N/A"}
-                        <br />
-                        After acquisition: {changeResults.afterAcquisitionDate ?? "N/A"}
-                      </div>
-                    )}
-
-                    {changeResults.summary && (
-                      <div className="rounded-xl border border-amber-400/10 bg-amber-400/[0.03] p-3 text-[10px] leading-relaxed text-gray-400">
-                        {changeResults.summary}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* =================================================
               QUERY INPUT
@@ -2071,32 +1497,6 @@ export default function AnalyzePage() {
   );
 }
 
-
-
-function BreakdownRow({
-  label,
-  percent,
-  hectares,
-}: {
-  label: string;
-  percent: number;
-  hectares: number;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between text-[10px]">
-        <span className="text-gray-400">{label}</span>
-        <span className="text-gray-500">{percent.toFixed(1)}% · {hectares.toFixed(2)} ha</span>
-      </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
-        <div
-          className="h-full rounded-full bg-cyan-400/70"
-          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
-        />
-      </div>
-    </div>
-  );
-}
 
 /* =============================================================
    METRIC CARD

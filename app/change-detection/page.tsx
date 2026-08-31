@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import SatelliteMap from "@/components/SatelliteMap";
+import TopNav from "@/components/TopNav";
 import {
   ArrowLeft,
   CalendarDays,
@@ -232,20 +233,7 @@ export default function ChangeDetectionPage() {
             </div>
           </Link>
 
-          <nav className="hidden md:flex items-center gap-2 text-xs">
-            <Link href="/" className="px-3 py-2 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-white/5">
-              Dashboard
-            </Link>
-            <Link href="/analyze" className="px-3 py-2 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-white/5">
-              Analyze
-            </Link>
-            <span className="px-3 py-2 rounded-lg bg-cyan-400/10 border border-cyan-400/20 text-cyan-300">
-              Change Detection
-            </span>
-            <Link href="/satellite-explorer" className="px-3 py-2 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-white/5">
-              Satellite Explorer
-            </Link>
-          </nav>
+          <TopNav />
 
           <div className="hidden md:flex items-center gap-2 text-[10px] text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />

@@ -1,3 +1,5 @@
+import TopNav from "@/components/TopNav";
+
 import {
   Activity,
   ArrowRight,
@@ -121,46 +123,7 @@ export default function Home() {
 
           {/* NAVIGATION */}
 
-          <nav
-            className="
-              hidden
-              md:flex
-              items-center
-              gap-8
-              text-sm
-              text-gray-400
-            "
-          >
-
-            <a
-              href="/"
-              className="text-white"
-            >
-              Dashboard
-            </a>
-
-            <a
-              href="/analyze"
-              className="hover:text-white transition"
-            >
-              Analyze
-            </a>
-
-            <a
-              href="/analyze"
-              className="hover:text-white transition"
-            >
-              Change Detection
-            </a>
-
-            <a
-              href="/analyze"
-              className="hover:text-white transition"
-            >
-              Satellite Explorer
-            </a>
-
-          </nav>
+          <TopNav />
 
 
           {/* LAUNCH DEMO */}
