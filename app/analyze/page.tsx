@@ -52,6 +52,18 @@ export default function AnalyzePage() {
 
   const [selection, setSelection] =
     useState<SelectionGeometry | null>(null);
+
+  // Visual evidence / heatmap state
+  const [evidenceIndex, setEvidenceIndex] =
+    useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
+  const [evidenceUrl, setEvidenceUrl] =
+    useState<string | null>(null);
+  const [evidenceBounds, setEvidenceBounds] =
+    useState<
+      [[number, number], [number, number], [number, number], [number, number]] | null
+    >(null);
+  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
     
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
@@ -154,6 +166,116 @@ export default function AnalyzePage() {
   const removeImage = () => {
     setUploadedImage(null);
     setImageName("");
+  };
+
+  // =========================================================
+  // VISUAL EVIDENCE / HEATMAP
+  // =========================================================
+
+  const getEvidenceBounds = () => {
+    if (selection?.type === "Point") {
+      const [lng, lat] = selection.coordinates;
+      const size = 0.0025;
+
+      return [
+        [lng - size, lat + size],
+        [lng + size, lat + size],
+        [lng + size, lat - size],
+        [lng - size, lat - size],
+      ] as [
+        [number, number],
+        [number, number],
+        [number, number],
+        [number, number]
+      ];
+    }
+
+    if (selection?.type === "Polygon") {
+      const ring = selection.coordinates[0] ?? [];
+
+      if (ring.length < 3) return null;
+
+      const lngs = ring.map(([lng]) => lng);
+      const lats = ring.map(([, lat]) => lat);
+
+      return [
+        [Math.min(...lngs), Math.max(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+        [Math.max(...lngs), Math.min(...lats)],
+        [Math.min(...lngs), Math.min(...lats)],
+      ] as [
+        [number, number],
+        [number, number],
+        [number, number],
+        [number, number]
+      ];
+    }
+
+    return null;
+  };
+
+  const clearEvidence = () => {
+    setEvidenceError("");
+    setEvidenceBounds(null);
+    setEvidenceUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+  };
+
+  const showEvidenceOnMap = async () => {
+    if (isEvidenceLoading) return;
+
+    if (!selection) {
+      setEvidenceError("Select a point or area on the map first.");
+      return;
+    }
+
+    const bounds = getEvidenceBounds();
+
+    if (!bounds) {
+      setEvidenceError("Please make a valid map selection first.");
+      return;
+    }
+
+    setIsEvidenceLoading(true);
+    setEvidenceError("");
+
+    try {
+      const params = new URLSearchParams({
+        index: evidenceIndex,
+        geometry: JSON.stringify(selection),
+      });
+
+      const response = await fetch(`/api/evidence?${params.toString()}`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(
+          data?.error || "Satellite heatmap could not be generated."
+        );
+      }
+
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
+
+      setEvidenceUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return nextUrl;
+      });
+      setEvidenceBounds(bounds);
+    } catch (error) {
+      console.error("SatQuery heatmap error:", error);
+      setEvidenceError(
+        error instanceof Error
+          ? error.message
+          : "Satellite heatmap could not be generated."
+      );
+    } finally {
+      setIsEvidenceLoading(false);
+    }
   };
 
   // =========================================================
@@ -562,7 +684,13 @@ export default function AnalyzePage() {
 
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
-              onSelectionChange={setSelection}
+              onSelectionChange={(nextSelection) => {
+                setSelection(nextSelection);
+                clearEvidence();
+              }}
+              evidenceUrl={evidenceUrl}
+              evidenceBounds={evidenceBounds}
+              evidenceIndex={evidenceIndex}
             />
 
           </div>
@@ -1139,25 +1267,71 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* SHOW EVIDENCE */}
+                {/* VISUAL EVIDENCE / HEATMAP */}
 
-                <button
-                  className="
-                    w-full
-                    mt-4
-                    py-2
-                    rounded-lg
-                    border
-                    border-white/10
-                    hover:bg-white/5
-                    text-xs
-                    text-gray-400
-                  "
-                >
+                <div className="mt-4 rounded-xl border border-cyan-400/15 bg-black/20 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase tracking-widest text-gray-500">
+                      Visual Evidence / Heatmap
+                    </span>
+                    <span className="text-[9px] text-gray-600">Sentinel-2</span>
+                  </div>
 
-                  Show Evidence on Map
+                  <div className="grid grid-cols-3 gap-2">
+                    {([["ndvi", "NDVI"], ["ndwi", "NDWI"], ["ndbi", "NDBI"]] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setEvidenceIndex(value);
+                          clearEvidence();
+                        }}
+                        className={`rounded-lg border py-2 text-[10px] transition ${
+                          evidenceIndex === value
+                            ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                            : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
 
-                </button>
+                  <button
+                    type="button"
+                    onClick={showEvidenceOnMap}
+                    disabled={isEvidenceLoading}
+                    className="w-full mt-2 py-2.5 rounded-lg border border-cyan-400/25 bg-cyan-400/[0.06] hover:bg-cyan-400/[0.12] text-xs text-cyan-200 disabled:opacity-50 transition"
+                  >
+                    {isEvidenceLoading
+                      ? `Generating ${evidenceIndex.toUpperCase()} Heatmap...`
+                      : evidenceUrl
+                        ? `Refresh ${evidenceIndex.toUpperCase()} Heatmap`
+                        : `Show ${evidenceIndex.toUpperCase()} Heatmap`}
+                  </button>
+
+                  {evidenceUrl && (
+                    <button
+                      type="button"
+                      onClick={clearEvidence}
+                      className="w-full mt-2 py-2 rounded-lg border border-white/10 bg-white/[0.02] text-[10px] text-gray-500 hover:text-gray-300 hover:bg-white/5 transition"
+                    >
+                      Hide Heatmap
+                    </button>
+                  )}
+
+                  {evidenceError && (
+                    <div className="mt-2 rounded-lg border border-red-400/20 bg-red-400/[0.04] p-2.5 text-[10px] text-red-300">
+                      {evidenceError}
+                    </div>
+                  )}
+
+                  <div className="mt-2 flex items-center gap-3 text-[9px] text-gray-600">
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500" />Low</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-300" />Medium</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-400" />High</span>
+                  </div>
+                </div>
 
               </div>
 
