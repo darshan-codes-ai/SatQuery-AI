@@ -55,7 +55,6 @@ type MapHelpers = maplibregl.Map & {
   __satqueryGoToLocation?: (lng: number, lat: number) => void;
 };
 
-
 function SearchIcon() {
   return (
     <svg
@@ -163,6 +162,7 @@ export default function SatelliteMap({
       center: [0, 20],
       zoom: 1.1,
       minZoom: 0.8,
+      // Allow true micro-level inspection of POIs/buildings.
       maxZoom: 19,
       projection: "mercator",
       renderWorldCopies: true,
@@ -437,12 +437,11 @@ export default function SatelliteMap({
     };
 
     helpers.__satqueryGoToLocation = (lng: number, lat: number) => {
-      const next = { lat, lng };
-
       map.flyTo({
         center: [lng, lat],
-        zoom: 12,
-        duration: 1400,
+        // Zoom from city-level to POI/building-level detail.
+        zoom: 17,
+        duration: 1600,
         essential: true,
       });
 
@@ -512,8 +511,6 @@ export default function SatelliteMap({
         coordinates: changeHeatmapBounds,
       });
 
-      // Put the heatmap above the selection fill so the changes remain
-      // clearly visible, but keep the selection outline above the heatmap.
       const beforeId = map.getLayer(SELECTION_LINE)
         ? SELECTION_LINE
         : undefined;
@@ -800,7 +797,6 @@ export default function SatelliteMap({
           <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.9)]" />
         </div>
       </div>
-
 
       {changeHeatmapUrl && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 rounded-xl border border-amber-300/20 bg-black/85 backdrop-blur-xl px-4 py-3 shadow-xl">
