@@ -192,8 +192,6 @@ async function findScene(
     throw new Error(`Invalid scene date: ${exactObservationDate || dateString}`);
   }
 
-  // Prefer the exact acquisition date returned by the working
-  // comparison API. Fall back to a small target-date window.
   const windowHours = exactObservationDate ? 12 : 36;
   const from = new Date(parsed.getTime() - windowHours * 60 * 60 * 1000);
   const to = new Date(parsed.getTime() + windowHours * 60 * 60 * 1000);
@@ -247,6 +245,9 @@ async function findScene(
   return features[0] ?? null;
 }
 
+// PNG requires an 8-bit integer color representation. We return
+// RGBA UINT8 pixels so the transparent areas and red/green change
+// classes render correctly in MapLibre.
 const EVALSCRIPT = `
 //VERSION=3
 
@@ -264,7 +265,7 @@ function setup() {
     ],
     output: {
       bands: 4,
-      sampleType: "FLOAT32"
+      sampleType: "UINT8"
     }
   };
 }
@@ -307,39 +308,39 @@ function evaluatePixel(samples) {
   const before = samples.before && samples.before.length ? samples.before[0] : null;
   const after = samples.after && samples.after.length ? samples.after[0] : null;
 
-  const b = indexValue("__INDEX__", before);
-  const a = indexValue("__INDEX__", after);
+  const beforeIndex = indexValue("__INDEX__", before);
+  const afterIndex = indexValue("__INDEX__", after);
 
-  if (!isFinite(b) || !isFinite(a)) {
+  if (!isFinite(beforeIndex) || !isFinite(afterIndex)) {
     return [0, 0, 0, 0];
   }
 
-  const delta = a - b;
-  const absDelta = Math.abs(delta);
+  const delta = afterIndex - beforeIndex;
+  const magnitude = Math.abs(delta);
 
-  // Only show meaningful index changes. This suppresses
-  // most single-pixel noise caused by illumination, registration,
-  // seasonal effects and small reflectance fluctuations.
-  const weak = 0.08;
-  const strong = 0.18;
+  // A small tolerance removes insignificant pixel-to-pixel noise,
+  // but still reveals moderate and strong changes.
+  const weak = 0.04;
+  const strong = 0.16;
 
-  if (absDelta < weak) {
+  if (magnitude < weak) {
     return [0, 0, 0, 0];
   }
 
   const strength = Math.min(1, Math.max(0,
-    (absDelta - weak) / (strong - weak)
+    (magnitude - weak) / (strong - weak)
   ));
 
-  // Two clear visual classes, with opacity tied to magnitude.
-  // Decrease = red, increase = green.
-  const alpha = 0.78 + 0.22 * strength;
+  // Visible alpha increases with change magnitude.
+  const alpha = Math.round(175 + 80 * strength);
 
   if (delta < 0) {
-    return [0.95, 0.04, 0.10, alpha];
+    // Red = index decrease.
+    return [235, 28, 45, alpha];
   }
 
-  return [0.02, 0.85, 0.22, alpha];
+  // Green = index increase.
+  return [24, 205, 72, alpha];
 }
 `;
 
