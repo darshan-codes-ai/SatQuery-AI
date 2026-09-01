@@ -52,7 +52,19 @@ export default function AnalyzePage() {
 
   const [selection, setSelection] =
     useState<SelectionGeometry | null>(null);
-    
+
+  // Evidence overlay / heatmap-style visual layer
+  const [evidenceIndex, setEvidenceIndex] =
+    useState<"ndvi" | "ndwi" | "ndbi">("ndvi");
+  const [evidenceUrl, setEvidenceUrl] =
+    useState<string | null>(null);
+  const [evidenceBounds, setEvidenceBounds] =
+    useState<
+      [[number, number], [number, number], [number, number], [number, number]] | null
+    >(null);
+  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
   ndvi: 0,
@@ -154,6 +166,123 @@ export default function AnalyzePage() {
   const removeImage = () => {
     setUploadedImage(null);
     setImageName("");
+  };
+
+  // =========================================================
+  // SHOW VISUAL EVIDENCE ON MAP
+  // =========================================================
+
+  const getEvidenceBounds = () => {
+    if (selection?.type === "Point") {
+      const [lng, lat] = selection.coordinates;
+      const size = 0.0025;
+
+      return [
+        [lng - size, lat + size],
+        [lng + size, lat + size],
+        [lng + size, lat - size],
+        [lng - size, lat - size],
+      ] as [
+        [number, number],
+        [number, number],
+        [number, number],
+        [number, number]
+      ];
+    }
+
+    if (selection?.type === "Polygon") {
+      const ring = selection.coordinates[0] ?? [];
+
+      if (ring.length < 3) return null;
+
+      const lngs = ring.map(([lng]) => lng);
+      const lats = ring.map(([, lat]) => lat);
+
+      const minLng = Math.min(...lngs);
+      const maxLng = Math.max(...lngs);
+      const minLat = Math.min(...lats);
+      const maxLat = Math.max(...lats);
+
+      return [
+        [minLng, maxLat],
+        [maxLng, maxLat],
+        [maxLng, minLat],
+        [minLng, minLat],
+      ] as [
+        [number, number],
+        [number, number],
+        [number, number],
+        [number, number]
+      ];
+    }
+
+    return null;
+  };
+
+  const showEvidenceOnMap = async () => {
+    if (isEvidenceLoading) return;
+
+    const geometry = selection;
+
+    if (!geometry) {
+      setEvidenceError("Select a point or area on the map first.");
+      return;
+    }
+
+    const bounds = getEvidenceBounds();
+
+    if (!bounds) {
+      setEvidenceError("Please make a valid map selection first.");
+      return;
+    }
+
+    setIsEvidenceLoading(true);
+    setEvidenceError("");
+
+    try {
+      const params = new URLSearchParams({
+        index: evidenceIndex,
+        geometry: JSON.stringify(geometry),
+      });
+
+      const response = await fetch(`/api/evidence?${params.toString()}`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.error || "Satellite evidence could not be generated."
+        );
+      }
+
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
+
+      setEvidenceUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return nextUrl;
+      });
+      setEvidenceBounds(bounds);
+    } catch (error) {
+      console.error("SatQuery evidence error:", error);
+      setEvidenceError(
+        error instanceof Error
+          ? error.message
+          : "Satellite evidence could not be generated."
+      );
+    } finally {
+      setIsEvidenceLoading(false);
+    }
+  };
+
+  const clearEvidence = () => {
+    setEvidenceError("");
+    setEvidenceBounds(null);
+    setEvidenceUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
   };
 
   // =========================================================
@@ -278,7 +407,7 @@ export default function AnalyzePage() {
 
       {/* =====================================================
           HEADER
-      ===================================================== */}
+      ===================================================== */
 
       <header className="relative z-50 h-16 border-b border-white/10 bg-[#060b16]/95 backdrop-blur-xl">
 
@@ -409,7 +538,7 @@ export default function AnalyzePage() {
 
       {/* =====================================================
           MAIN LAYOUT
-      ===================================================== */}
+      ===================================================== */
 
       <div
         className="
@@ -421,7 +550,7 @@ export default function AnalyzePage() {
 
         {/* ===================================================
             LEFT SIDE
-        =================================================== */}
+        =================================================== */
 
         <section
           className="
@@ -433,7 +562,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               MAP TOOLBAR
-          ================================================= */}
+          ================================================= */
 
           <div
             className="
@@ -547,7 +676,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               REAL MAP
-          ================================================= */}
+          ================================================= */
 
           <div
             className="
@@ -562,7 +691,13 @@ export default function AnalyzePage() {
 
             <SatelliteMap
               onCoordinatesChange={setSelectedCoordinates}
-              onSelectionChange={setSelection}
+              onSelectionChange={(nextSelection) => {
+                setSelection(nextSelection);
+                clearEvidence();
+              }}
+              evidenceUrl={evidenceUrl}
+              evidenceBounds={evidenceBounds}
+              evidenceIndex={evidenceIndex}
             />
 
           </div>
@@ -570,7 +705,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               ANALYSIS METRICS
-          ================================================= */}
+          ================================================= */
 
           <div className="border-t border-white/10 p-4">
 
@@ -631,7 +766,7 @@ export default function AnalyzePage() {
 
         {/* ===================================================
             RIGHT SIDE — AI ASSISTANT
-        =================================================== */}
+        =================================================== */
 
         <aside
           className="
@@ -643,7 +778,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               AI HEADER
-          ================================================= */}
+          ================================================= */
 
           <div
             className="
@@ -697,7 +832,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               CHAT AREA
-          ================================================= */}
+          ================================================= */
 
           <div
             className="
@@ -803,7 +938,7 @@ export default function AnalyzePage() {
 
             {/* =================================================
                 WELCOME MESSAGE
-            ================================================= */}
+            ================================================= */
 
             {messages.length === 0 && (
 
@@ -869,7 +1004,7 @@ export default function AnalyzePage() {
 
                 {/* =================================================
                     SUGGESTED QUESTIONS
-                ================================================= */}
+                ================================================= */
 
                 <div className="mt-6">
 
@@ -1139,25 +1274,70 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* SHOW EVIDENCE */}
+                {/* SHOW VISUAL EVIDENCE */}
 
-                <button
-                  className="
-                    w-full
-                    mt-4
-                    py-2
-                    rounded-lg
-                    border
-                    border-white/10
-                    hover:bg-white/5
-                    text-xs
-                    text-gray-400
-                  "
-                >
+                <div className="mt-4">
+                  <div className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
+                    Visual Evidence
+                  </div>
 
-                  Show Evidence on Map
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ["ndvi", "NDVI"],
+                      ["ndwi", "NDWI"],
+                      ["ndbi", "NDBI"],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setEvidenceIndex(value);
+                          clearEvidence();
+                        }}
+                        className={`rounded-lg border py-2 text-[10px] transition ${
+                          evidenceIndex === value
+                            ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                            : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
 
-                </button>
+                  <button
+                    type="button"
+                    onClick={showEvidenceOnMap}
+                    disabled={isEvidenceLoading}
+                    className="w-full mt-2 py-2.5 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] hover:bg-cyan-400/[0.09] text-xs text-gray-300 disabled:opacity-50 transition"
+                  >
+                    {isEvidenceLoading
+                      ? `Generating ${evidenceIndex.toUpperCase()}...`
+                      : evidenceUrl
+                        ? `Refresh ${evidenceIndex.toUpperCase()} Evidence`
+                        : `Show ${evidenceIndex.toUpperCase()} on Map`}
+                  </button>
+
+                  {evidenceUrl && (
+                    <button
+                      type="button"
+                      onClick={clearEvidence}
+                      className="w-full mt-2 py-2 rounded-lg border border-white/10 bg-white/[0.02] text-[10px] text-gray-500 hover:text-gray-300 hover:bg-white/5 transition"
+                    >
+                      Hide Visual Evidence
+                    </button>
+                  )}
+
+                  {evidenceError && (
+                    <div className="mt-2 rounded-lg border border-red-400/20 bg-red-400/[0.04] p-2.5 text-[10px] leading-relaxed text-red-300">
+                      {evidenceError}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-[9px] text-gray-600">
+                    Sentinel-2 spectral evidence for the selected area.
+                  </div>
+                </div>
 
               </div>
 
@@ -1168,7 +1348,7 @@ export default function AnalyzePage() {
 
           {/* =================================================
               QUERY INPUT
-          ================================================= */}
+          ================================================= */
 
           <div
             className="
@@ -1394,96 +1574,36 @@ export default function AnalyzePage() {
                   border-2
                   border-dashed
                   border-white/10
-                  hover:border-cyan-400/30
                   rounded-2xl
                   p-10
                   text-center
                   cursor-pointer
+                  hover:border-cyan-400/30
                   transition
                 "
               >
 
                 <input
                   type="file"
-                  accept="
-                    image/png,
-                    image/jpeg,
-                    image/jpg,
-                    image/webp
-                  "
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
                   className="hidden"
                   onChange={handleImageUpload}
                 />
 
+                <Upload
+                  size={30}
+                  className="mx-auto text-gray-500"
+                />
 
-                {/* UPLOAD ICON */}
+                <p className="mt-4 text-sm text-gray-300">
+                  Click to upload satellite imagery
+                </p>
 
-                <div
-                  className="
-                    w-14
-                    h-14
-                    rounded-2xl
-                    bg-cyan-400/10
-                    flex
-                    items-center
-                    justify-center
-                    mx-auto
-                  "
-                >
-
-                  <Upload
-                    size={25}
-                    className="text-cyan-400"
-                  />
-
-                </div>
-
-
-                <h3 className="mt-5 font-medium">
-
-                  Drop your imagery here
-
-                </h3>
-
-
-                <p className="text-xs text-gray-500 mt-2">
-
-                  or click to browse files
-
+                <p className="mt-1 text-xs text-gray-600">
+                  PNG, JPG, JPEG or WEBP
                 </p>
 
               </label>
-
-
-              {/* =================================================
-                  SUPPORTED DATA
-              ================================================= */}
-
-              <div
-                className="
-                  grid
-                  grid-cols-3
-                  gap-3
-                  mt-5
-                "
-              >
-
-                <UploadInfo
-                  icon={<Satellite size={17} />}
-                  text="Satellite"
-                />
-
-                <UploadInfo
-                  icon={<Layers size={17} />}
-                  text="Multispectral"
-                />
-
-                <UploadInfo
-                  icon={<Activity size={17} />}
-                  text="Analysis Ready"
-                />
-
-              </div>
 
             </div>
 
@@ -1497,10 +1617,9 @@ export default function AnalyzePage() {
   );
 }
 
-
-/* =============================================================
-   METRIC CARD
-============================================================= */
+// =========================================================
+// METRIC CARD
+// =========================================================
 
 function MetricCard({
   icon,
@@ -1513,9 +1632,7 @@ function MetricCard({
   value: string;
   subtitle: string;
 }) {
-
   return (
-
     <div
       className="
         rounded-xl
@@ -1532,67 +1649,22 @@ function MetricCard({
           {icon}
         </div>
 
-        <span className="text-[10px] text-gray-500">
+        <span className="text-xs text-gray-500">
           {title}
         </span>
 
       </div>
 
 
-      <div className="mt-2 text-xl font-bold">
+      <div className="mt-2 text-2xl font-bold">
         {value}
       </div>
 
 
-      <div className="mt-1 text-[10px] text-gray-600">
+      <div className="text-[10px] text-gray-600 mt-1">
         {subtitle}
       </div>
 
     </div>
-
-  );
-}
-
-
-/* =============================================================
-   UPLOAD INFORMATION CARD
-============================================================= */
-
-function UploadInfo({
-  icon,
-  text,
-}: {
-  icon: React.ReactNode;
-  text: string;
-}) {
-
-  return (
-
-    <div
-      className="
-        p-3
-        rounded-xl
-        bg-white/[0.03]
-        border
-        border-white/10
-        text-center
-      "
-    >
-
-      <div className="flex justify-center text-cyan-400">
-
-        {icon}
-
-      </div>
-
-
-      <p className="text-[10px] text-gray-500 mt-2">
-
-        {text}
-
-      </p>
-
-    </div>
-
   );
 }
