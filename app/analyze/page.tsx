@@ -65,6 +65,11 @@ export default function AnalyzePage() {
   const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
     
+  // Area statistics state
+  const [areaStats, setAreaStats] = useState<any | null>(null);
+  const [isAreaStatsLoading, setIsAreaStatsLoading] = useState(false);
+  const [areaStatsError, setAreaStatsError] = useState("");
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState({
   ndvi: 0,
@@ -275,6 +280,40 @@ export default function AnalyzePage() {
       );
     } finally {
       setIsEvidenceLoading(false);
+    }
+  };
+
+  // =========================================================
+  // AREA STATISTICS
+  // =========================================================
+
+  const loadAreaStats = async () => {
+    if (isAreaStatsLoading) return;
+    if (!selection) {
+      setAreaStatsError("Select a point or draw an area on the map first.");
+      return;
+    }
+    setIsAreaStatsLoading(true);
+    setAreaStatsError("");
+    try {
+      const params = new URLSearchParams({
+        geometry: JSON.stringify(selection),
+      });
+      const response = await fetch(`/api/area-stats?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || "Area statistics could not be calculated.");
+      }
+      setAreaStats(data);
+    } catch (error) {
+      console.error("SatQuery area statistics error:", error);
+      setAreaStatsError(
+        error instanceof Error ? error.message : "Area statistics could not be calculated."
+      );
+    } finally {
+      setIsAreaStatsLoading(false);
     }
   };
 
@@ -687,6 +726,8 @@ export default function AnalyzePage() {
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
                 clearEvidence();
+                setAreaStats(null);
+                setAreaStatsError("");
               }}
               evidenceUrl={evidenceUrl}
               evidenceBounds={evidenceBounds}
@@ -1331,6 +1372,86 @@ export default function AnalyzePage() {
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-300" />Medium</span>
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-400" />High</span>
                   </div>
+                </div>
+
+                {/* AREA STATISTICS */}
+                <div className="mt-4 rounded-xl border border-cyan-400/15 bg-black/20 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                        Area Statistics
+                      </div>
+                      <div className="text-[9px] text-gray-600 mt-1">
+                        Calculate land-signal composition for the selected area.
+                      </div>
+                    </div>
+                    <BarChart3 size={15} className="text-cyan-400" />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadAreaStats}
+                    disabled={!selection || isAreaStatsLoading}
+                    className="w-full py-2.5 rounded-lg border border-cyan-400/25 bg-cyan-400/[0.06] hover:bg-cyan-400/[0.12] text-xs text-cyan-200 disabled:opacity-50 transition"
+                  >
+                    {isAreaStatsLoading
+                      ? "Calculating Area Statistics..."
+                      : areaStats
+                        ? "Refresh Area Statistics"
+                        : "Calculate Area Statistics"}
+                  </button>
+
+                  {areaStatsError && (
+                    <div className="mt-2 rounded-lg border border-red-400/20 bg-red-400/[0.04] p-2.5 text-[10px] text-red-300">
+                      {areaStatsError}
+                    </div>
+                  )}
+
+                  {areaStats?.area && (
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      <div className="rounded-lg bg-white/[0.03] p-3">
+                        <div className="text-[9px] text-gray-500">Area</div>
+                        <div className="text-base font-bold mt-1">{Number(areaStats.area.km2).toFixed(3)} km²</div>
+                      </div>
+                      <div className="rounded-lg bg-white/[0.03] p-3">
+                        <div className="text-[9px] text-gray-500">Hectares</div>
+                        <div className="text-base font-bold mt-1">{Number(areaStats.area.hectares).toFixed(2)} ha</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {areaStats?.estimatedBreakdown && (
+                    <div className="mt-3 space-y-2.5">
+                      {[
+                        ["Vegetation", areaStats.estimatedBreakdown.vegetationPercent, "bg-emerald-400"],
+                        ["Water", areaStats.estimatedBreakdown.waterPercent, "bg-cyan-400"],
+                        ["Built-up", areaStats.estimatedBreakdown.builtupPercent, "bg-orange-400"],
+                        ["Other", areaStats.estimatedBreakdown.otherPercent, "bg-gray-400"],
+                      ].map(([label, value, bar]) => (
+                        <div key={String(label)}>
+                          <div className="flex items-center justify-between text-[10px] mb-1">
+                            <span className="text-gray-400">{String(label)}</span>
+                            <span className="text-gray-500">{Number(value).toFixed(1)}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                            <div className={`h-full rounded-full ${String(bar)}`} style={{ width: `${Math.min(100, Math.max(0, Number(value)))}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {areaStats?.coverage && (
+                    <div className="mt-3 rounded-lg bg-white/[0.03] p-3">
+                      <div className="flex justify-between text-[9px] text-gray-500 mb-1.5">
+                        <span>Valid satellite data</span>
+                        <span>{Number(areaStats.coverage.validDataPercent).toFixed(1)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                        <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.min(100, Math.max(0, Number(areaStats.coverage.validDataPercent)))}%` }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
               </div>
