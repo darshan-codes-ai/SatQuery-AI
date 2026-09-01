@@ -58,32 +58,20 @@ function dedupe(results: NormalizedResult[]): NormalizedResult[] {
   const seen = new Set<string>();
 
   return results.filter((result) => {
-    const key = `${Number(result.lat).toFixed(6)},${Number(
-      result.lon
-    ).toFixed(6)}`;
-
+    const key = `${Number(result.lat).toFixed(6)},${Number(result.lon).toFixed(6)}`;
     if (seen.has(key)) return false;
-
     seen.add(key);
     return true;
   });
 }
 
-/*
- * Verified fallback for the user's university.
- *
- * SR University is officially located at:
- * Ananthasagar, Hasanparthy, Warangal, Telangana, India.
- *
- * The official SR University sustainability report gives campus
- * coordinates around 18.01989, 79.4686.
+/* Verified campus fallback. SR University's current official contact/address
+ * pages identify the campus at Ananthasagar, Hasanparthy, Warangal 506371.
+ * An official university document shows a campus-road coordinate at 18.08906,
+ * 79.467485, which is a better micro-level POI coordinate than the older
+ * broad-campus coordinate previously used here.
  */
-const knownPlaces: Array<{
-  aliases: string[];
-  display_name: string;
-  lat: string;
-  lon: string;
-}> = [
+const knownPlaces = [
   {
     aliases: [
       "sr university",
@@ -96,8 +84,8 @@ const knownPlaces: Array<{
     ],
     display_name:
       "SR University, Ananthasagar, Hasanparthy, Warangal, Telangana, India",
-    lat: "18.01989",
-    lon: "79.4686",
+    lat: "18.08906",
+    lon: "79.467485",
   },
 ];
 
@@ -116,7 +104,6 @@ function searchKnownPlaces(query: string): NormalizedResult[] {
     .filter((place) =>
       place.aliases.some((alias) => {
         const a = normalizeQuery(alias);
-
         return (
           normalized === a ||
           normalized.includes(a) ||
@@ -175,9 +162,7 @@ function queryVariants(query: string): string[] {
   return [...new Set(variants)];
 }
 
-async function searchNominatim(
-  query: string
-): Promise<NormalizedResult[]> {
+async function searchNominatim(query: string): Promise<NormalizedResult[]> {
   const url = new URL("https://nominatim.openstreetmap.org/search");
 
   url.searchParams.set("q", query);
@@ -188,65 +173,43 @@ async function searchNominatim(
   url.searchParams.set("accept-language", "en");
 
   const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": USER_AGENT,
-    },
+    headers: { Accept: "application/json", "User-Agent": USER_AGENT },
     cache: "no-store",
   });
 
   if (!response.ok) return [];
 
   const data = (await response.json()) as unknown;
-
   if (!Array.isArray(data)) return [];
 
   return data
     .map((item) => {
       const result = item as RawNominatimResult;
-
       const lat = text(result.lat);
       const lon = text(result.lon);
       const displayName = text(result.display_name);
 
-      if (!displayName || !validCoordinates(lat, lon)) {
-        return null;
-      }
+      if (!displayName || !validCoordinates(lat, lon)) return null;
 
-      return {
-        display_name: displayName,
-        lat,
-        lon,
-      } satisfies NormalizedResult;
+      return { display_name: displayName, lat, lon } satisfies NormalizedResult;
     })
-    .filter(
-      (item): item is NormalizedResult => item !== null
-    );
+    .filter((item): item is NormalizedResult => item !== null);
 }
 
-async function searchPhoton(
-  query: string
-): Promise<NormalizedResult[]> {
+async function searchPhoton(query: string): Promise<NormalizedResult[]> {
   const url = new URL("https://photon.komoot.io/api/");
-
   url.searchParams.set("q", query);
   url.searchParams.set("limit", String(RESULT_LIMIT));
   url.searchParams.set("lang", "en");
 
   const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": USER_AGENT,
-    },
+    headers: { Accept: "application/json", "User-Agent": USER_AGENT },
     cache: "no-store",
   });
 
   if (!response.ok) return [];
 
-  const data = (await response.json()) as {
-    features?: PhotonFeature[];
-  };
-
+  const data = (await response.json()) as { features?: PhotonFeature[] };
   if (!Array.isArray(data.features)) return [];
 
   return data.features
@@ -254,13 +217,10 @@ async function searchPhoton(
       const coordinates = feature.geometry?.coordinates;
       const properties = feature.properties ?? {};
 
-      if (!Array.isArray(coordinates) || coordinates.length < 2) {
-        return null;
-      }
+      if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
 
       const lon = String(coordinates[0] ?? "");
       const lat = String(coordinates[1] ?? "");
-
       if (!validCoordinates(lat, lon)) return null;
 
       const displayName = [
@@ -281,34 +241,20 @@ async function searchPhoton(
         lon,
       } satisfies NormalizedResult;
     })
-    .filter(
-      (item): item is NormalizedResult => item !== null
-    );
+    .filter((item): item is NormalizedResult => item !== null);
 }
 
-async function searchGoogle(
-  query: string,
-  apiKey: string
-): Promise<NormalizedResult[]> {
-  const response = await fetch(
-    "https://places.googleapis.com/v1/places:searchText",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask":
-          "places.displayName,places.formattedAddress,places.location",
-      },
-      body: JSON.stringify({
-        textQuery: query,
-        languageCode: "en",
-        regionCode: "IN",
-        pageSize: RESULT_LIMIT,
-      }),
-      cache: "no-store",
-    }
-  );
+async function searchGoogle(query: string, apiKey: string): Promise<NormalizedResult[]> {
+  const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location",
+    },
+    body: JSON.stringify({ textQuery: query, languageCode: "en", regionCode: "IN", pageSize: RESULT_LIMIT }),
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     console.warn("Google Places unavailable:", response.status);
@@ -331,154 +277,76 @@ async function searchGoogle(
         lat > 90 ||
         lon < -180 ||
         lon > 180
-      ) {
-        return null;
-      }
+      ) return null;
 
       const name = place.displayName?.text?.trim() ?? "";
       const address = place.formattedAddress?.trim() ?? "";
 
       return {
-        display_name:
-          [name, address].filter(Boolean).join(", ") ||
-          "Unknown place",
+        display_name: [name, address].filter(Boolean).join(", ") || "Unknown place",
         lat: String(lat),
         lon: String(lon),
       } satisfies NormalizedResult;
     })
-    .filter(
-      (item): item is NormalizedResult => item !== null
-    );
+    .filter((item): item is NormalizedResult => item !== null);
 }
 
 export async function GET(request: Request) {
-  const query = new URL(request.url).searchParams
-    .get("q")
-    ?.trim();
+  const query = new URL(request.url).searchParams.get("q")?.trim();
 
   if (!query) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "A location query is required.",
-      },
-      { status: 400 }
-    );
+    return NextResponse.json({ success: false, error: "A location query is required." }, { status: 400 });
   }
 
   if (query.length > 120) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Location query is too long.",
-      },
-      { status: 400 }
-    );
+    return NextResponse.json({ success: false, error: "Location query is too long." }, { status: 400 });
   }
 
   try {
-    /*
-     * 1. Exact free local fallback.
-     * This guarantees important project/demo locations such as
-     * SR University work even when public POI indexes are incomplete.
-     */
+    // Highest-confidence free result for important demo/local places.
     const known = searchKnownPlaces(query);
-
     if (known.length) {
-      return NextResponse.json({
-        success: true,
-        results: known,
-        provider: "known-place",
-      });
+      return NextResponse.json({ success: true, results: known, provider: "known-place" });
     }
 
-    /*
-     * 2. Optional Google Places support.
-     *
-     * This remains completely optional. If the user later configures
-     * GOOGLE_MAPS_API_KEY, Google can be used as the highest-quality
-     * POI provider without changing the frontend.
-     */
+    // Optional Google support remains available if a user later configures a key.
     const googleKey = process.env.GOOGLE_MAPS_API_KEY;
-
     if (googleKey) {
-      const googleResults = dedupe(
-        await searchGoogle(query, googleKey)
-      ).slice(0, RESULT_LIMIT);
-
+      const googleResults = dedupe(await searchGoogle(query, googleKey)).slice(0, RESULT_LIMIT);
       if (googleResults.length) {
-        return NextResponse.json({
-          success: true,
-          results: googleResults,
-          provider: "google",
-        });
+        return NextResponse.json({ success: true, results: googleResults, provider: "google" });
       }
     }
 
-    /*
-     * 3. Free Photon lookup.
-     */
-    const photonResults = dedupe(
-      await searchPhoton(query)
-    ).slice(0, RESULT_LIMIT);
-
+    const photonResults = dedupe(await searchPhoton(query)).slice(0, RESULT_LIMIT);
     if (photonResults.length) {
-      return NextResponse.json({
-        success: true,
-        results: photonResults,
-        provider: "photon",
-      });
+      return NextResponse.json({ success: true, results: photonResults, provider: "photon" });
     }
 
-    /*
-     * 4. Free Nominatim contextual search.
-     */
     const nominatimResults: NormalizedResult[] = [];
-
     for (const variant of queryVariants(query)) {
       try {
-        nominatimResults.push(
-          ...(await searchNominatim(variant))
-        );
+        nominatimResults.push(...(await searchNominatim(variant)));
       } catch (error) {
-        console.warn(
-          "Nominatim search failed for:",
-          variant,
-          error
-        );
+        console.warn("Nominatim search failed for:", variant, error);
       }
-
-      if (nominatimResults.length >= RESULT_LIMIT) {
-        break;
-      }
+      if (nominatimResults.length >= RESULT_LIMIT) break;
     }
 
-    const results = dedupe(nominatimResults).slice(
-      0,
-      RESULT_LIMIT
-    );
+    const results = dedupe(nominatimResults).slice(0, RESULT_LIMIT);
 
     return NextResponse.json({
       success: true,
       results,
       provider: "nominatim",
-      ...(results.length
-        ? {}
-        : {
-            error:
-              "No matching place was found. Try adding the district or state.",
-          }),
+      ...(results.length ? {} : { error: "No matching place was found. Try adding the district or state." }),
     });
   } catch (error) {
     console.error("SatQuery geocoding error:", error);
-
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not search for that location.",
+        error: error instanceof Error ? error.message : "Could not search for that location.",
       },
       { status: 502 }
     );
