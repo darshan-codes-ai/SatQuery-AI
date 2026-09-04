@@ -37,6 +37,7 @@ const SELECTION_POINTS = "satquery-selection-points";
 const SPECTRAL_SOURCE = "satquery-spectral-layer";
 const SPECTRAL_LAYER = "satquery-spectral-layer-raster";
 const BASEMAP_LAYER = "satquery-base-map";
+const LABELS_LAYER = "satquery-english-labels";
 
 function SearchIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-cyan-400" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>;
@@ -106,11 +107,11 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
   }, [evidenceUrl]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoadedRef.current || !map.getLayer(BASEMAP_LAYER)) return;
-    map.setLayoutProperty(BASEMAP_LAYER, "visibility", baseMapMode === "satellite" ? "visible" : "none");
-    if (map.getLayer("osm-base")) {
-      map.setLayoutProperty("osm-base", "visibility", baseMapMode === "street" ? "visible" : "none");
-    }
+    if (!map || !mapLoadedRef.current) return;
+    if (map.getLayer(BASEMAP_LAYER)) map.setLayoutProperty(BASEMAP_LAYER, "visibility", baseMapMode === "satellite" ? "visible" : "none");
+    if (map.getLayer("osm-base")) map.setLayoutProperty("osm-base", "visibility", baseMapMode === "street" ? "visible" : "none");
+    // Keep English place/boundary labels visible in both base-map modes.
+    if (map.getLayer(LABELS_LAYER)) map.setLayoutProperty(LABELS_LAYER, "visibility", "visible");
   }, [baseMapMode]);
 
   useEffect(() => {
@@ -136,10 +137,21 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
             maxzoom: 19,
             attribution: "© OpenStreetMap contributors",
           },
+          englishLabels: {
+            type: "raster",
+            // Esri reference layer designed specifically to overlay imagery.
+            tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: 18,
+            attribution: "Esri, Garmin, HERE, © OpenStreetMap contributors, and the GIS user community",
+          },
         },
         layers: [
           { id: BASEMAP_LAYER, type: "raster", source: "imagery" },
           { id: "osm-base", type: "raster", source: "osm", layout: { visibility: "none" } },
+          // Reference layer sits above satellite imagery so names/boundaries stay readable.
+          { id: LABELS_LAYER, type: "raster", source: "englishLabels", paint: { "raster-opacity": 1, "raster-fade-duration": 0 } },
         ],
       },
       center: [0, 20],
@@ -286,7 +298,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
         {searchResults.map((result, index) => <button key={`${result.lat}-${result.lon}-${index}`} type="button" onClick={() => chooseSearchResult(result)} className="block w-full border-b border-white/5 px-4 py-3 text-left text-xs text-gray-300 last:border-b-0 hover:bg-white/5 hover:text-white">{result.display_name}</button>)}
       </div>}
     </div>
-    <div className="absolute top-4 left-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /><span className="text-xs font-semibold text-white">MAP ONLINE</span></div><p className="text-[10px] text-gray-400 mt-1">Realistic satellite basemap</p></div>
+    <div className="absolute top-4 left-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none"><div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /><span className="text-xs font-semibold text-white">MAP ONLINE</span></div><p className="text-[10px] text-gray-400 mt-1">Realistic satellite basemap + English labels</p></div>
     <div className="absolute top-20 left-4 z-20 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl p-2 shadow-xl">
       <div className="text-[9px] uppercase tracking-widest text-gray-500 px-2 pb-2">Base map</div>
       <div className="flex gap-1">
@@ -295,13 +307,13 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
       </div>
     </div>
     <div className="absolute top-4 right-24 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl p-2"><div className="text-[9px] uppercase tracking-widest text-gray-500 px-2 pb-2">Select area</div><div className="flex gap-1">{([["point", "Point"], ["rectangle", "Rectangle"], ["polygon", "Polygon"]] as [SelectionMode, string][]).map(([mode, label]) => <button key={mode} type="button" onClick={() => setSelectionMode(mode)} className={`px-2.5 py-1.5 rounded-lg text-[10px] transition ${selectionMode === mode ? "bg-cyan-400 text-black" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}>{label}</button>)}</div></div>
-    <div className="absolute top-4 right-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none"><div className="text-xs font-semibold text-white">Earth</div><div className="text-[10px] text-gray-400 mt-1">Satellite basemap</div></div>
+    <div className="absolute top-4 right-4 z-10 rounded-xl border border-white/10 bg-black/75 backdrop-blur-xl px-4 py-3 pointer-events-none"><div className="text-xs font-semibold text-white">Earth</div><div className="text-[10px] text-gray-400 mt-1">Satellite imagery + English reference labels</div></div>
     {layerControlEnabled && <div className="absolute left-4 bottom-20 z-30 w-[250px] rounded-xl border border-white/10 bg-black/85 backdrop-blur-xl p-3 shadow-2xl">
       <div className="flex items-center justify-between mb-2"><div className="text-[9px] uppercase tracking-widest text-gray-500">Satellite Layers</div>{spectralUrl && <div className="text-[8px] text-emerald-300">LIVE</div>}</div>
       <div className="grid grid-cols-4 gap-1.5">
         {(["rgb", "ndvi", "ndwi", "ndbi"] as Index[]).map(index => <button key={index} type="button" onClick={() => { setSpectralIndex(index); setSpectralError(""); }} className={`rounded-lg py-2 text-[10px] font-semibold transition ${spectralIndex === index ? "bg-cyan-400 text-black" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}>{index === "rgb" ? "RGB" : index.toUpperCase()}</button>)}
       </div>
-      <div className="mt-2 text-[9px] text-gray-500">RGB = Sentinel-2 true color; base map = higher-detail satellite imagery.</div>
+      <div className="mt-2 text-[9px] text-gray-500">RGB = Sentinel-2 true color; base map = high-detail satellite imagery.</div>
       <button type="button" onClick={showSpectralLayer} disabled={!selection || isSpectralLoading || Boolean(evidenceUrl)} className="mt-2 w-full rounded-lg bg-cyan-400 py-2 text-[10px] font-semibold text-black hover:bg-cyan-300 disabled:opacity-40">{isSpectralLoading ? "Generating..." : spectralUrl ? `Refresh ${spectralIndex === "rgb" ? "RGB" : spectralIndex.toUpperCase()}` : `Show ${spectralIndex === "rgb" ? "RGB" : spectralIndex.toUpperCase()}`}</button>
       {spectralUrl && !evidenceUrl && <button type="button" onClick={hideSpectralLayer} className="mt-1.5 w-full rounded-lg border border-white/10 py-1.5 text-[9px] text-gray-500 hover:bg-white/5">Hide layer</button>}
       {spectralError && <div className="mt-2 text-[9px] leading-relaxed text-red-300">{spectralError}</div>}
