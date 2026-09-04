@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { detectAnalysisType } from "@/lib/remote-sensing/query-parser";
+import { getSupabaseServer } from "@/lib/supabase/server";
 
 type Coordinates = { lat: number; lng: number };
 type SelectionGeometry =
@@ -118,35 +119,16 @@ async function findUsableObservation(accessToken: string, geometry: SelectionGeo
   return null;
 }
 
-function vegetationInterpretation(ndvi: number): string {
-  if (ndvi >= 0.6) return "strong vegetation activity";
-  if (ndvi >= 0.35) return "moderate vegetation activity";
-  if (ndvi >= 0.15) return "sparse vegetation activity";
-  return "low vegetation activity";
-}
-function waterInterpretation(ndwi: number): string {
-  if (ndwi >= 0.3) return "a strong water-related spectral signal";
-  if (ndwi >= 0.1) return "a moderate water-related spectral signal";
-  if (ndwi >= -0.05) return "a limited water-related spectral signal";
-  return "a low water-related spectral signal";
-}
-function builtUpInterpretation(ndbi: number): string {
-  if (ndbi >= 0.3) return "a strong built-up surface signal";
-  if (ndbi >= 0.1) return "a moderate built-up surface signal";
-  if (ndbi >= -0.05) return "a limited built-up surface signal";
-  return "a low built-up surface signal";
-}
+function vegetationInterpretation(ndvi: number): string { if (ndvi >= 0.6) return "strong vegetation activity"; if (ndvi >= 0.35) return "moderate vegetation activity"; if (ndvi >= 0.15) return "sparse vegetation activity"; return "low vegetation activity"; }
+function waterInterpretation(ndwi: number): string { if (ndwi >= 0.3) return "a strong water-related spectral signal"; if (ndwi >= 0.1) return "a moderate water-related spectral signal"; if (ndwi >= -0.05) return "a limited water-related spectral signal"; return "a low water-related spectral signal"; }
+function builtUpInterpretation(ndbi: number): string { if (ndbi >= 0.3) return "a strong built-up surface signal"; if (ndbi >= 0.1) return "a moderate built-up surface signal"; if (ndbi >= -0.05) return "a limited built-up surface signal"; return "a low built-up surface signal"; }
 
 function confidenceDetails(coverage: number, cloudCoverage: number) {
   const validPixelScore = Math.max(0, Math.min(1, coverage / 100));
   const cloudQualityScore = Math.max(0, Math.min(1, 1 - cloudCoverage / 100));
   const value = Math.max(0, Math.min(1, validPixelScore * 0.7 + cloudQualityScore * 0.3));
   const label = value >= 0.8 ? "High" : value >= 0.55 ? "Moderate" : "Low";
-  const explanation = label === "High"
-    ? "High confidence: strong valid-pixel coverage and acceptable scene cloud conditions."
-    : label === "Moderate"
-      ? "Moderate confidence: the result is usable, but missing pixels or cloud conditions reduce certainty."
-      : "Low confidence: limited valid coverage or unfavorable cloud conditions mean the result should be treated cautiously.";
+  const explanation = label === "High" ? "High confidence: strong valid-pixel coverage and acceptable scene cloud conditions." : label === "Moderate" ? "Moderate confidence: the result is usable, but missing pixels or cloud conditions reduce certainty." : "Low confidence: limited valid coverage or unfavorable cloud conditions mean the result should be treated cautiously.";
   return { value: Number(value.toFixed(2)), label, explanation, components: { validPixelScore: Number(validPixelScore.toFixed(2)), cloudQualityScore: Number(cloudQualityScore.toFixed(2)) } };
 }
 
@@ -157,15 +139,15 @@ function createInterpretation(ndvi: number, ndwi: number, ndbi: number, coverage
   else if (ndvi >= 0.55 && ndbi < 0.1) overall = "The selected area appears predominantly vegetated, with relatively limited built-up surface signal.";
   else if (ndwi >= 0.25) overall = "The selected area has a notable water-related spectral signal, with surrounding surface characteristics varying by location.";
   else overall = "The selected area shows a mixed spectral profile across vegetation, water and built-up surfaces.";
-  return {
-    vegetation, water, builtUp, overall, confidenceLabel: confidence.label, confidenceText: confidence.explanation,
-    text: `SatQuery AI Interpretation:\n\n• Vegetation: The area shows ${vegetation}.\n• Water: The area shows ${water}.\n• Built-up: The area shows ${builtUp}.\n\nOverall assessment: ${overall}\n\nData quality: ${confidence.explanation}`,
-  };
+  return { vegetation, water, builtUp, overall, confidenceLabel: confidence.label, confidenceText: confidence.explanation, text: `SatQuery AI Interpretation:\n\n• Vegetation: The area shows ${vegetation}.\n• Water: The area shows ${water}.\n• Built-up: The area shows ${builtUp}.\n\nOverall assessment: ${overall}\n\nData quality: ${confidence.explanation}` };
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json(), query = body.query, coordinates = body.coordinates as Coordinates | undefined, selection = normalizeSelection(body.selection);
+    const body = await request.json();
+    const query = body.query;
+    const coordinates = body.coordinates as Coordinates | undefined;
+    const selection = normalizeSelection(body.selection);
     if (typeof query !== "string" || !query.trim()) return NextResponse.json({ success: false, error: "A valid query is required." }, { status: 400 });
     if (!coordinates || typeof coordinates.lat !== "number" || typeof coordinates.lng !== "number" || !Number.isFinite(coordinates.lat) || !Number.isFinite(coordinates.lng)) return NextResponse.json({ success: false, error: "Valid map coordinates are required." }, { status: 400 });
     if (coordinates.lat < -90 || coordinates.lat > 90 || coordinates.lng < -180 || coordinates.lng > 180) return NextResponse.json({ success: false, error: "Invalid latitude or longitude." }, { status: 400 });
@@ -189,21 +171,46 @@ export async function POST(request: Request) {
       case "ndwi": primaryValue = ndwi; baseResponse = `The selected area has a mean Sentinel-2 NDWI of ${ndwi.toFixed(2)}. Higher NDWI values generally indicate stronger surface-water signals.`; break;
       case "ndbi": primaryValue = ndbi; baseResponse = `The selected area has a mean Sentinel-2 NDBI of ${ndbi.toFixed(2)}. Higher NDBI values can indicate relatively built-up surfaces.`; break;
       case "change": baseResponse = `This is a temporal-change query. Reliable change detection requires comparable observations from multiple dates.`; break;
-      default: baseResponse = `The selected Sentinel-2 area was analyzed successfully. Mean NDVI is ${ndvi.toFixed(2)}, mean NDWI is ${ndwi.toFixed(2)}, and mean NDBI is ${ndbi.toFixed(2)}.`;
+      default: baseResponse = `The selected Sentinel-2 area was analyzed successfully. Mean NDVI is ${ndvi.toFixed(2)}, mean NDWI is ${ndwi.toFixed(2)}, and mean NDBI is ${ndbi.toFixed(2)}.`; break;
     }
 
-    return NextResponse.json({
-      success: true, query: query.trim(), coordinates, geometry,
+    const responsePayload = {
+      success: true,
+      query: query.trim(),
+      coordinates,
+      geometry,
       analysis: { type: analysisType, indices: { ndvi: Number(ndvi.toFixed(3)), ndwi: Number(ndwi.toFixed(3)), ndbi: Number(ndbi.toFixed(3)) }, primaryValue: Number(primaryValue.toFixed(3)), coverage: Number(coverage.toFixed(1)) },
       response: `${baseResponse}\n\n${interpretation.text}`,
       interpretation,
       confidence: confidence.value,
-      metadata: {
-        sensor: "Sentinel-2 L2A", acquisitionDate: result.scene.properties?.datetime ?? null, cloudCoverage,
-        processingResolution: "20m", processing: "Sentinel Hub Catalog + Statistical API",
-        dataQuality: { sampleCount, noDataCount, geometryPixelCount, validPixels, validPixelCoveragePercent: Number(coverage.toFixed(1)), confidenceLabel: confidence.label, confidenceComponents: confidence.components },
-      },
-    });
+      metadata: { sensor: "Sentinel-2 L2A", acquisitionDate: result.scene.properties?.datetime ?? null, cloudCoverage, processingResolution: "20m", processing: "Sentinel Hub Catalog + Statistical API", dataQuality: { sampleCount, noDataCount, geometryPixelCount, validPixels, validPixelCoveragePercent: Number(coverage.toFixed(1)), confidenceLabel: confidence.label, confidenceComponents: confidence.components } },
+    };
+
+    // Save after a successful analysis. A database failure must never block the analysis result.
+    const supabase = getSupabaseServer();
+    if (supabase) {
+      const { error: saveError } = await supabase.from("analysis_history").insert({
+        query: responsePayload.query,
+        latitude: responsePayload.coordinates.lat,
+        longitude: responsePayload.coordinates.lng,
+        geometry: responsePayload.geometry,
+        analysis_type: responsePayload.analysis.type,
+        ndvi: responsePayload.analysis.indices.ndvi,
+        ndwi: responsePayload.analysis.indices.ndwi,
+        ndbi: responsePayload.analysis.indices.ndbi,
+        valid_pixel_coverage: responsePayload.metadata.dataQuality.validPixelCoveragePercent,
+        confidence: responsePayload.confidence,
+        confidence_label: responsePayload.metadata.dataQuality.confidenceLabel,
+        cloud_coverage: responsePayload.metadata.cloudCoverage,
+        acquisition_date: responsePayload.metadata.acquisitionDate,
+        sensor: responsePayload.metadata.sensor,
+        processing_resolution: responsePayload.metadata.processingResolution,
+        ai_interpretation: responsePayload.interpretation,
+      });
+      if (saveError) console.warn("Supabase analysis history save failed:", saveError.message);
+    }
+
+    return NextResponse.json(responsePayload);
   } catch (error) {
     console.error("SatQuery analysis error:", error);
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Satellite analysis failed." }, { status: 500 });
