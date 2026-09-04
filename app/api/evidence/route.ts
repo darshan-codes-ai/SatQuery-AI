@@ -7,14 +7,10 @@ const PROCESS_URL =
   "https://services.sentinel-hub.com/api/v1/process";
 
 type Geometry =
-  | {
-      type: "Point";
-      coordinates: [number, number];
-    }
-  | {
-      type: "Polygon";
-      coordinates: [number, number][][];
-    };
+  | { type: "Point"; coordinates: [number, number] }
+  | { type: "Polygon"; coordinates: [number, number][][] };
+
+type EvidenceIndex = "rgb" | "ndvi" | "ndwi" | "ndbi";
 
 function isValidCoordinatePair(value: unknown): value is [number, number] {
   return (
@@ -36,37 +32,24 @@ function normalizeGeometry(input: unknown): Geometry | null {
 
   const geometry = input as Record<string, unknown>;
 
-  if (
-    geometry.type === "Point" &&
-    isValidCoordinatePair(geometry.coordinates)
-  ) {
-    return {
-      type: "Point",
-      coordinates: geometry.coordinates,
-    };
+  if (geometry.type === "Point" && isValidCoordinatePair(geometry.coordinates)) {
+    return { type: "Point", coordinates: geometry.coordinates };
   }
 
   if (geometry.type === "Polygon" && Array.isArray(geometry.coordinates)) {
     const rings = geometry.coordinates as unknown[];
-
     if (!rings.length || !Array.isArray(rings[0])) return null;
 
-    const ring = rings[0] as unknown[];
+    const ring = (rings[0] as unknown[]).filter(isValidCoordinatePair);
+    if (ring.length < 3) return null;
 
-    if (ring.length < 4) return null;
-
-    const normalizedRing = ring.filter(isValidCoordinatePair);
-
-    if (normalizedRing.length < 4) return null;
-
-    const first = normalizedRing[0];
-    const last = normalizedRing[normalizedRing.length - 1];
-
+    const first = ring[0];
+    const last = ring[ring.length - 1];
     const closed = first[0] === last[0] && first[1] === last[1];
 
     return {
       type: "Polygon",
-      coordinates: [closed ? normalizedRing : [...normalizedRing, first]],
+      coordinates: [closed ? ring : [...ring, first]],
     };
   }
 
@@ -77,17 +60,10 @@ function bboxFromGeometry(geometry: Geometry) {
   if (geometry.type === "Point") {
     const [lng, lat] = geometry.coordinates;
     const size = 0.0025;
-
-    return [
-      lng - size,
-      lat - size,
-      lng + size,
-      lat + size,
-    ];
+    return [lng - size, lat - size, lng + size, lat + size];
   }
 
   const points = geometry.coordinates[0];
-
   let minLng = Infinity;
   let minLat = Infinity;
   let maxLng = -Infinity;
@@ -111,33 +87,22 @@ async function getAccessToken() {
     throw new Error("Sentinel Hub credentials are missing.");
   }
 
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: clientId,
-    client_secret: clientSecret,
-  });
-
   const response = await fetch(AUTH_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
     cache: "no-store",
   });
 
-  const text = await response.text();
-
   if (!response.ok) {
-    throw new Error(
-      `Sentinel Hub authentication failed (${response.status}).`
-    );
+    throw new Error(`Sentinel Hub authentication failed (${response.status}).`);
   }
 
-  const data = JSON.parse(text) as {
-    access_token?: string;
-  };
-
+  const data = (await response.json()) as { access_token?: string };
   if (!data.access_token) {
     throw new Error("Sentinel Hub did not return an access token.");
   }
@@ -145,10 +110,33 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-// Evidence visualization evalscripts.
-// The output is a simple categorical RGBA image so the
-// frontend can display the selected index directly on the map.
-const EVALSCRIPTS: Record<"ndvi" | "ndwi" | "ndbi", string> = {
+const INVALID_SCL = new Set([0, 1, 3, 8, 9, 10, 11]);
+
+const EVALSCRIPTS: Record<EvidenceIndex, string> = {
+  rgb: `
+//VERSION=3
+function setup() {
+  return {
+    input: [{ bands: ["B04", "B03", "B02", "SCL", "dataMask"] }],
+    output: { bands: 4, sampleType: "UINT8" }
+  };
+}
+function evaluatePixel(sample) {
+  const invalid = sample.dataMask === 0 ||
+    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
+    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  if (invalid) return [0, 0, 0, 0];
+
+  // Mild contrast stretch / gamma so Sentinel-2 true color is easier to see.
+  const gamma = (value) => Math.pow(Math.max(0, Math.min(1, value * 1.35)), 0.85);
+  return [
+    Math.round(gamma(sample.B04) * 255),
+    Math.round(gamma(sample.B03) * 255),
+    Math.round(gamma(sample.B02) * 255),
+    255
+  ];
+}
+`,
   ndvi: `
 //VERSION=3
 function setup() {
@@ -223,89 +211,56 @@ function evaluatePixel(sample) {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const index = url.searchParams.get("index") ?? "ndvi";
+    const index = (url.searchParams.get("index") ?? "rgb").toLowerCase() as EvidenceIndex;
     const geometryRaw = url.searchParams.get("geometry");
     const requestedDate = url.searchParams.get("date");
 
-    if (!(["ndvi", "ndwi", "ndbi"] as const).includes(index as any)) {
+    if (!["rgb", "ndvi", "ndwi", "ndbi"].includes(index)) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Supported evidence indices are NDVI, NDWI and NDBI.",
-        },
+        { success: false, error: "Supported layers are RGB, NDVI, NDWI and NDBI." },
         { status: 400 }
       );
     }
 
     if (!geometryRaw) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "A selection geometry is required.",
-        },
+        { success: false, error: "A selection geometry is required." },
         { status: 400 }
       );
     }
 
     let parsedGeometry: unknown;
-
     try {
       parsedGeometry = JSON.parse(geometryRaw);
     } catch {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid geometry JSON.",
-        },
+        { success: false, error: "Invalid geometry JSON." },
         { status: 400 }
       );
     }
 
     const geometry = normalizeGeometry(parsedGeometry);
-
     if (!geometry) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid point or polygon geometry.",
-        },
+        { success: false, error: "Invalid point or polygon geometry." },
         { status: 400 }
       );
     }
 
     const accessToken = await getAccessToken();
-
     const bbox = bboxFromGeometry(geometry);
 
-    // Use a one-year window and let leastCC choose a suitable
-    // acquisition. The image is an evidence visualization,
-    // not the source of the numeric statistics.
     let to = new Date();
-    let from = new Date(
-      to.getTime() -
-        365 *
-          24 *
-          60 *
-          60 *
-          1000
-    );
+    let from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
 
-    // When the analysis API provides the acquisition date,
-    // render evidence from the same date so the visualization
-    // and numeric result refer to the same observation.
     if (requestedDate) {
       const sceneDate = new Date(requestedDate);
-
       if (Number.isNaN(sceneDate.getTime())) {
         return NextResponse.json(
-          {
-            success: false,
-            error: "Invalid evidence acquisition date.",
-          },
+          { success: false, error: "Invalid evidence acquisition date." },
           { status: 400 }
         );
       }
-
       from = new Date(sceneDate.getTime() - 12 * 60 * 60 * 1000);
       to = new Date(sceneDate.getTime() + 12 * 60 * 60 * 1000);
     }
@@ -315,12 +270,9 @@ export async function GET(request: Request) {
         bounds: {
           bbox,
           properties: {
-            crs:
-              "http://www.opengis.net/def/crs/OGC/1.3/CRS84",
+            crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84",
           },
-          ...(geometry.type === "Polygon"
-            ? { geometry }
-            : {}),
+          ...(geometry.type === "Polygon" ? { geometry } : {}),
         },
         data: [
           {
@@ -337,18 +289,16 @@ export async function GET(request: Request) {
         ],
       },
       output: {
-        width: 512,
-        height: 512,
+        width: 768,
+        height: 768,
         responses: [
           {
             identifier: "default",
-            format: {
-              type: "image/png",
-            },
+            format: { type: "image/png" },
           },
         ],
       },
-      evalscript: EVALSCRIPTS[index as "ndvi" | "ndwi" | "ndbi"],
+      evalscript: EVALSCRIPTS[index],
     };
 
     const response = await fetch(PROCESS_URL, {
@@ -364,18 +314,9 @@ export async function GET(request: Request) {
 
     if (!response.ok) {
       const errorText = await response.text();
-
-      console.error(
-        "Sentinel Hub evidence error:",
-        response.status,
-        errorText
-      );
-
+      console.error("Sentinel Hub evidence error:", response.status, errorText);
       return NextResponse.json(
-        {
-          success: false,
-          error: `Satellite evidence request failed (${response.status}).`,
-        },
+        { success: false, error: `Satellite evidence request failed (${response.status}).` },
         { status: response.status }
       );
     }
@@ -391,18 +332,14 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error(
-      "SatQuery evidence error:",
-      error
-    );
-
+    console.error("SatQuery evidence error:", error);
     return NextResponse.json(
       {
         success: false,
         error:
           error instanceof Error
             ? error.message
-            : "Could not generate NDVI evidence.",
+            : "Could not generate satellite evidence.",
       },
       { status: 500 }
     );
