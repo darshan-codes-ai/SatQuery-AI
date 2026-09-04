@@ -4,7 +4,10 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-type Coordinates = { lat: number; lng: number };
+type Coordinates = {
+  lat: number;
+  lng: number;
+};
 
 type SelectionGeometry =
   | { type: "Point"; coordinates: [number, number] }
@@ -12,7 +15,18 @@ type SelectionGeometry =
 
 type SelectionMode = "point" | "rectangle" | "polygon";
 type Index = "ndvi" | "ndwi" | "ndbi";
-type EvidenceBounds = [[number, number], [number, number], [number, number], [number, number]];
+type EvidenceBounds = [
+  [number, number],
+  [number, number],
+  [number, number],
+  [number, number]
+];
+
+type SearchResult = {
+  display_name: string;
+  lat: string;
+  lon: string;
+};
 
 type SatelliteMapProps = {
   onCoordinatesChange?: (coordinates: Coordinates) => void;
@@ -23,8 +37,6 @@ type SatelliteMapProps = {
   changeHeatmapUrl?: string | null;
   changeHeatmapBounds?: EvidenceBounds | null;
 };
-
-type SearchResult = { display_name: string; lat: string; lon: string };
 
 type MapHelpers = maplibregl.Map & {
   __satqueryFinishPolygon?: () => void;
@@ -41,7 +53,18 @@ const SPECTRAL_LAYER = "satquery-spectral-layer-raster";
 
 function SearchIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-cyan-400" aria-hidden="true">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-cyan-400"
+      aria-hidden="true"
+    >
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
     </svg>
@@ -60,10 +83,8 @@ function makePointBounds(lng: number, lat: number): EvidenceBounds {
 
 function boundsFromSelection(selection: SelectionGeometry | null): EvidenceBounds | null {
   if (!selection) return null;
-
   if (selection.type === "Point") {
-    const [lng, lat] = selection.coordinates;
-    return makePointBounds(lng, lat);
+    return makePointBounds(selection.coordinates[0], selection.coordinates[1]);
   }
 
   const ring = selection.coordinates[0] ?? [];
@@ -105,6 +126,7 @@ export default function SatelliteMap({
 
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("point");
   const [coordinates, setCoordinates] = useState<Coordinates>({ lat: 20, lng: 0 });
+  const [selection, setSelection] = useState<SelectionGeometry | null>(null);
   const [polygonCount, setPolygonCount] = useState(0);
   const [hasSelection, setHasSelection] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -112,9 +134,6 @@ export default function SatelliteMap({
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
 
-  // Unified spectral-layer controls. These appear only on pages that
-  // explicitly provide the evidenceUrl prop (Analyze / Satellite Explorer),
-  // so Change Detection keeps its dedicated heatmap controls.
   const layerControlEnabled = evidenceUrl !== undefined;
   const [spectralIndex, setSpectralIndex] = useState<Index>(evidenceIndex);
   const [spectralUrl, setSpectralUrl] = useState<string | null>(null);
@@ -122,9 +141,17 @@ export default function SatelliteMap({
   const [isSpectralLoading, setIsSpectralLoading] = useState(false);
   const [spectralError, setSpectralError] = useState("");
 
-  useEffect(() => { onCoordinatesChangeRef.current = onCoordinatesChange; }, [onCoordinatesChange]);
-  useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
-  useEffect(() => { setSpectralIndex(evidenceIndex); }, [evidenceIndex]);
+  useEffect(() => {
+    onCoordinatesChangeRef.current = onCoordinatesChange;
+  }, [onCoordinatesChange]);
+
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onSelectionChange]);
+
+  useEffect(() => {
+    setSpectralIndex(evidenceIndex);
+  }, [evidenceIndex]);
 
   useEffect(() => {
     modeRef.current = selectionMode;
@@ -138,8 +165,6 @@ export default function SatelliteMap({
   }, [selectionMode]);
 
   useEffect(() => {
-    // A parent-controlled evidence layer takes precedence over the internal
-    // switcher, avoiding duplicate raster layers on the map.
     if (evidenceUrl !== null && evidenceUrl !== undefined) {
       setSpectralUrl((previous) => {
         if (previous) URL.revokeObjectURL(previous);
@@ -190,10 +215,34 @@ export default function SatelliteMap({
 
     map.on("load", () => {
       mapLoadedRef.current = true;
-      map.addSource(SELECTION_SOURCE, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: SELECTION_FILL, type: "fill", source: SELECTION_SOURCE, paint: { "fill-color": "#22d3ee", "fill-opacity": 0.18 } });
-      map.addLayer({ id: SELECTION_LINE, type: "line", source: SELECTION_SOURCE, paint: { "line-color": "#22d3ee", "line-width": 2 } });
-      map.addLayer({ id: SELECTION_POINTS, type: "circle", source: SELECTION_SOURCE, filter: ["==", "$type", "Point"], paint: { "circle-radius": 5, "circle-color": "#06131f", "circle-stroke-color": "#22d3ee", "circle-stroke-width": 2 } });
+      map.addSource(SELECTION_SOURCE, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: SELECTION_FILL,
+        type: "fill",
+        source: SELECTION_SOURCE,
+        paint: { "fill-color": "#22d3ee", "fill-opacity": 0.18 },
+      });
+      map.addLayer({
+        id: SELECTION_LINE,
+        type: "line",
+        source: SELECTION_SOURCE,
+        paint: { "line-color": "#22d3ee", "line-width": 2 },
+      });
+      map.addLayer({
+        id: SELECTION_POINTS,
+        type: "circle",
+        source: SELECTION_SOURCE,
+        filter: ["==", "$type", "Point"],
+        paint: {
+          "circle-radius": 5,
+          "circle-color": "#06131f",
+          "circle-stroke-color": "#22d3ee",
+          "circle-stroke-width": 2,
+        },
+      });
     });
 
     const emitCoordinates = (lng: number, lat: number) => {
@@ -205,7 +254,11 @@ export default function SatelliteMap({
     const setSelectionData = (geometry: SelectionGeometry) => {
       const source = map.getSource(SELECTION_SOURCE) as maplibregl.GeoJSONSource | undefined;
       if (!source) return;
-      source.setData({ type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry }] });
+      source.setData({
+        type: "FeatureCollection",
+        features: [{ type: "Feature", properties: {}, geometry }],
+      });
+      setSelection(geometry);
       setHasSelection(true);
       onSelectionChangeRef.current?.(geometry);
     };
@@ -218,6 +271,7 @@ export default function SatelliteMap({
       rectangleStartRef.current = null;
       polygonPointsRef.current = [];
       setPolygonCount(0);
+      setSelection(null);
       setHasSelection(false);
       setSpectralError("");
       setSpectralBounds(null);
@@ -236,15 +290,40 @@ export default function SatelliteMap({
       el.style.borderRadius = "50%";
       el.style.background = "#06131f";
       el.style.boxShadow = "0 0 18px rgba(34,211,238,0.9)";
-      markerRef.current = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+      markerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .addTo(map);
     };
 
     const updatePolygonPreview = () => {
       const points = polygonPointsRef.current;
       if (!points.length) return;
-      const features: GeoJSON.Feature[] = points.map((point) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: point } }));
-      if (points.length >= 2) features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: points } });
-      if (points.length >= 3) features.push({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[...points, points[0]]] } });
+
+      const features: GeoJSON.Feature[] = points.map((point) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Point", coordinates: point },
+      }));
+
+      if (points.length >= 2) {
+        features.push({
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: points },
+        });
+      }
+
+      if (points.length >= 3) {
+        features.push({
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "Polygon",
+            coordinates: [[...points, points[0]]],
+          },
+        });
+      }
+
       const source = map.getSource(SELECTION_SOURCE) as maplibregl.GeoJSONSource | undefined;
       source?.setData({ type: "FeatureCollection", features });
     };
@@ -334,7 +413,6 @@ export default function SatelliteMap({
     };
   }, []);
 
-  // Parent-controlled evidence overlay.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
@@ -354,7 +432,11 @@ export default function SatelliteMap({
       return;
     }
 
-    map.addSource(sourceId, { type: "image", url: evidenceUrl, coordinates: evidenceBounds });
+    map.addSource(sourceId, {
+      type: "image",
+      url: evidenceUrl,
+      coordinates: evidenceBounds,
+    });
     map.addLayer(
       {
         id: layerId,
@@ -366,7 +448,6 @@ export default function SatelliteMap({
     );
   }, [evidenceUrl, evidenceBounds]);
 
-  // Change-detection overlay.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
@@ -386,19 +467,26 @@ export default function SatelliteMap({
       return;
     }
 
-    map.addSource(sourceId, { type: "image", url: changeHeatmapUrl, coordinates: changeHeatmapBounds });
+    map.addSource(sourceId, {
+      type: "image",
+      url: changeHeatmapUrl,
+      coordinates: changeHeatmapBounds,
+    });
     map.addLayer(
       {
         id: layerId,
         type: "raster",
         source: sourceId,
-        paint: { "raster-opacity": 1, "raster-resampling": "nearest", "raster-fade-duration": 0 },
+        paint: {
+          "raster-opacity": 1,
+          "raster-resampling": "nearest",
+          "raster-fade-duration": 0,
+        },
       },
       map.getLayer(SELECTION_LINE) ? SELECTION_LINE : undefined
     );
   }, [changeHeatmapUrl, changeHeatmapBounds]);
 
-  // Internal unified spectral-layer overlay.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
@@ -415,7 +503,11 @@ export default function SatelliteMap({
       return;
     }
 
-    map.addSource(SPECTRAL_SOURCE, { type: "image", url: spectralUrl, coordinates: spectralBounds });
+    map.addSource(SPECTRAL_SOURCE, {
+      type: "image",
+      url: spectralUrl,
+      coordinates: spectralBounds,
+    });
     map.addLayer(
       {
         id: SPECTRAL_LAYER,
@@ -526,13 +618,15 @@ export default function SatelliteMap({
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
-      {/* LOCATION SEARCH */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-[min(520px,calc(100%-2rem))]">
         <form onSubmit={handleSearch} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/80 backdrop-blur-xl p-2 shadow-2xl">
           <SearchIcon />
           <input
             value={searchQuery}
-            onChange={(event) => { setSearchQuery(event.target.value); setSearchError(""); }}
+            onChange={(event) => {
+              setSearchQuery(event.target.value);
+              setSearchError("");
+            }}
             placeholder="Search any place on Earth..."
             className="min-w-0 flex-1 bg-transparent px-1 py-2 text-xs text-white outline-none placeholder:text-gray-500"
           />
@@ -574,34 +668,21 @@ export default function SatelliteMap({
         <div className="text-[10px] text-gray-400 mt-1">Global 2D Map</div>
       </div>
 
-      {/* UNIFIED LAYER SWITCHER — Analyze / Satellite Explorer */}
       {layerControlEnabled && (
         <div className="absolute left-4 bottom-20 z-30 w-[210px] rounded-xl border border-white/10 bg-black/85 backdrop-blur-xl p-3 shadow-2xl">
           <div className="text-[9px] uppercase tracking-widest text-gray-500 mb-2">Spectral Layers</div>
           <div className="grid grid-cols-3 gap-1.5">
             {(["ndvi", "ndwi", "ndbi"] as Index[]).map((index) => (
-              <button
-                key={index}
-                type="button"
-                onClick={() => { setSpectralIndex(index); setSpectralError(""); }}
-                className={`rounded-lg py-2 text-[10px] font-semibold transition ${spectralIndex === index ? "bg-cyan-400 text-black" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}
-              >
+              <button key={index} type="button" onClick={() => { setSpectralIndex(index); setSpectralError(""); }} className={`rounded-lg py-2 text-[10px] font-semibold transition ${spectralIndex === index ? "bg-cyan-400 text-black" : "bg-white/5 text-gray-400 hover:bg-white/10"}`}>
                 {index.toUpperCase()}
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={showSpectralLayer}
-            disabled={!selection || isSpectralLoading || Boolean(evidenceUrl)}
-            className="mt-2 w-full rounded-lg bg-cyan-400 py-2 text-[10px] font-semibold text-black hover:bg-cyan-300 disabled:opacity-40"
-          >
+          <button type="button" onClick={showSpectralLayer} disabled={!selection || isSpectralLoading || Boolean(evidenceUrl)} className="mt-2 w-full rounded-lg bg-cyan-400 py-2 text-[10px] font-semibold text-black hover:bg-cyan-300 disabled:opacity-40">
             {isSpectralLoading ? "Generating..." : spectralUrl ? `Refresh ${spectralIndex.toUpperCase()}` : `Show ${spectralIndex.toUpperCase()}`}
           </button>
           {spectralUrl && !evidenceUrl && (
-            <button type="button" onClick={hideSpectralLayer} className="mt-1.5 w-full rounded-lg border border-white/10 py-1.5 text-[9px] text-gray-500 hover:bg-white/5">
-              Hide layer
-            </button>
+            <button type="button" onClick={hideSpectralLayer} className="mt-1.5 w-full rounded-lg border border-white/10 py-1.5 text-[9px] text-gray-500 hover:bg-white/5">Hide layer</button>
           )}
           {spectralError && <div className="mt-2 text-[9px] leading-relaxed text-red-300">{spectralError}</div>}
         </div>
