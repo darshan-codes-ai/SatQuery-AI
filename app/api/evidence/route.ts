@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 
 const AUTH_URL =
   "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
-
 const PROCESS_URL =
   "https://services.sentinel-hub.com/api/v1/process";
+const REQUEST_TIMEOUT_MS = 45000;
+const MAX_RETRIES = 2;
 
 type Geometry =
   | { type: "Point"; coordinates: [number, number] }
@@ -20,16 +21,13 @@ function isValidCoordinatePair(value: unknown): value is [number, number] {
     typeof value[1] === "number" &&
     Number.isFinite(value[0]) &&
     Number.isFinite(value[1]) &&
-    value[0] >= -180 &&
-    value[0] <= 180 &&
-    value[1] >= -90 &&
-    value[1] <= 90
+    value[0] >= -180 && value[0] <= 180 &&
+    value[1] >= -90 && value[1] <= 90
   );
 }
 
 function normalizeGeometry(input: unknown): Geometry | null {
   if (!input || typeof input !== "object") return null;
-
   const geometry = input as Record<string, unknown>;
 
   if (geometry.type === "Point" && isValidCoordinatePair(geometry.coordinates)) {
@@ -79,27 +77,71 @@ function bboxFromGeometry(geometry: Geometry) {
   return [minLng, minLat, maxLng, maxLat];
 }
 
+async function fetchWithRetry(
+  input: string,
+  init: RequestInit,
+  label: string
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return response;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error;
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+  }
+
+  const detail =
+    lastError instanceof Error
+      ? `${lastError.name}: ${lastError.message}`
+      : String(lastError);
+  throw new Error(`${label} network request failed after ${MAX_RETRIES + 1} attempts: ${detail}`);
+}
+
 async function getAccessToken() {
   const clientId = process.env.SENTINEL_HUB_CLIENT_ID;
   const clientSecret = process.env.SENTINEL_HUB_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    throw new Error("Sentinel Hub credentials are missing.");
+    throw new Error(
+      "Sentinel Hub credentials are missing. Check SENTINEL_HUB_CLIENT_ID and SENTINEL_HUB_CLIENT_SECRET in .env.local."
+    );
   }
 
-  const response = await fetch(AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-    cache: "no-store",
-  });
+  const response = await fetchWithRetry(
+    AUTH_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      cache: "no-store",
+    },
+    "Sentinel Hub authentication"
+  );
 
   if (!response.ok) {
-    throw new Error(`Sentinel Hub authentication failed (${response.status}).`);
+    const errorText = await response.text().catch(() => "");
+    throw new Error(
+      `Sentinel Hub authentication failed (${response.status})${errorText ? `: ${errorText.slice(0, 500)}` : "."}`
+    );
   }
 
   const data = (await response.json()) as { access_token?: string };
@@ -109,8 +151,6 @@ async function getAccessToken() {
 
   return data.access_token;
 }
-
-const INVALID_SCL = new Set([0, 1, 3, 8, 9, 10, 11]);
 
 const EVALSCRIPTS: Record<EvidenceIndex, string> = {
   rgb: `
@@ -126,8 +166,6 @@ function evaluatePixel(sample) {
     sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
     sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
   if (invalid) return [0, 0, 0, 0];
-
-  // Mild contrast stretch / gamma so Sentinel-2 true color is easier to see.
   const gamma = (value) => Math.pow(Math.max(0, Math.min(1, value * 1.35)), 0.85);
   return [
     Math.round(gamma(sample.B04) * 255),
@@ -146,9 +184,7 @@ function setup() {
   };
 }
 function evaluatePixel(sample) {
-  const invalid = sample.dataMask === 0 ||
-    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
-    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  const invalid = sample.dataMask === 0 || sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 || sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
   if (invalid) return [0, 0, 0, 0];
   const denominator = sample.B08 + sample.B04;
   if (denominator === 0) return [0, 0, 0, 0];
@@ -169,9 +205,7 @@ function setup() {
   };
 }
 function evaluatePixel(sample) {
-  const invalid = sample.dataMask === 0 ||
-    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
-    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  const invalid = sample.dataMask === 0 || sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 || sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
   if (invalid) return [0, 0, 0, 0];
   const denominator = sample.B03 + sample.B08;
   if (denominator === 0) return [0, 0, 0, 0];
@@ -192,9 +226,7 @@ function setup() {
   };
 }
 function evaluatePixel(sample) {
-  const invalid = sample.dataMask === 0 ||
-    sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 ||
-    sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
+  const invalid = sample.dataMask === 0 || sample.SCL === 0 || sample.SCL === 1 || sample.SCL === 3 || sample.SCL === 8 || sample.SCL === 9 || sample.SCL === 10 || sample.SCL === 11;
   if (invalid) return [0, 0, 0, 0];
   const denominator = sample.B11 + sample.B08;
   if (denominator === 0) return [0, 0, 0, 0];
@@ -301,22 +333,29 @@ export async function GET(request: Request) {
       evalscript: EVALSCRIPTS[index],
     };
 
-    const response = await fetch(PROCESS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "image/png",
+    const response = await fetchWithRetry(
+      PROCESS_URL,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "image/png",
+        },
+        body: JSON.stringify(requestBody),
+        cache: "no-store",
       },
-      body: JSON.stringify(requestBody),
-      cache: "no-store",
-    });
+      "Sentinel Hub satellite evidence"
+    );
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = await response.text().catch(() => "");
       console.error("Sentinel Hub evidence error:", response.status, errorText);
       return NextResponse.json(
-        { success: false, error: `Satellite evidence request failed (${response.status}).` },
+        {
+          success: false,
+          error: `Satellite evidence request failed (${response.status})${errorText ? `: ${errorText.slice(0, 600)}` : "."}`,
+        },
         { status: response.status }
       );
     }
@@ -333,6 +372,7 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     console.error("SatQuery evidence error:", error);
+
     return NextResponse.json(
       {
         success: false,
