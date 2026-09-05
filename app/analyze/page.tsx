@@ -1197,61 +1197,39 @@ export default function AnalyzePage() {
                 </div>
 
 
-                {/* EVIDENCE VALUES */}
+                {/* EVIDENCE SUMMARY */}
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
 
-                  <div
-                    className="
-                      rounded-xl
-                      bg-black/20
-                      p-3
-                    "
-                  >
+                  <IndexAssessment
+                    title="VEGETATION"
+                    value={analysisResults.ndvi}
+                    index="NDVI"
+                  />
 
-                    <div className="text-[10px] text-gray-500">
-                      NDVI
-                    </div>
+                  <IndexAssessment
+                    title="WATER"
+                    value={analysisResults.ndwi}
+                    index="NDWI"
+                  />
 
-                    <div
-                      className="
-                        text-lg
-                        font-bold
-                        text-cyan-300
-                        mt-1
-                      "
-                    >
-                      {analysisResults.ndvi.toFixed(2)}
-                    </div>
+                  <IndexAssessment
+                    title="BUILT-UP"
+                    value={analysisResults.ndbi}
+                    index="NDBI"
+                  />
 
-                  </div>
+                </div>
 
-
-                  <div
-                    className="
-                      rounded-xl
-                      bg-black/20
-                      p-3
-                    "
-                  >
-
-                    <div className="text-[10px] text-gray-500">
-                      CONFIDENCE
-                    </div>
-
-                    <div
-                      className="
-                        text-lg
-                        font-bold
-                        text-emerald-400
-                        mt-1
-                      "
-                    >
+                <div className="mt-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500">
+                      Overall confidence
+                    </span>
+                    <span className="text-sm font-bold text-emerald-400">
                       {Math.round(analysisResults.confidence * 100)}%
-                    </div>
-
+                    </span>
                   </div>
-
                 </div>
 
 
@@ -1900,6 +1878,75 @@ function UploadInfo({
 
   );
 }
+
+/* =============================================================
+   INDEX ASSESSMENT CARD
+============================================================= */
+
+function IndexAssessment({
+  title,
+  value,
+  index,
+}: {
+  title: string;
+  value: number;
+  index: "NDVI" | "NDWI" | "NDBI";
+}) {
+  const status = getIndexStatus(index, value);
+  const statusClass =
+    status.level === "Strong"
+      ? "text-emerald-400"
+      : status.level === "Moderate"
+        ? "text-yellow-300"
+        : "text-gray-400";
+
+  return (
+    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+      <div className="text-[9px] uppercase tracking-widest text-gray-600">
+        {title}
+      </div>
+
+      <div className="mt-1 flex items-end justify-between gap-2">
+        <div>
+          <div className="text-lg font-bold text-white">
+            {Number(value).toFixed(2)}
+          </div>
+          <div className="text-[8px] text-gray-600">{index}</div>
+        </div>
+
+        <div className={`text-[9px] font-bold ${statusClass}`}>
+          {status.level.toUpperCase()}
+        </div>
+      </div>
+
+      <div className="mt-2 text-[9px] leading-relaxed text-gray-500">
+        {status.description}
+      </div>
+    </div>
+  );
+}
+
+function getIndexStatus(
+  index: "NDVI" | "NDWI" | "NDBI",
+  value: number
+) {
+  if (index === "NDVI") {
+    if (value >= 0.55) return { level: "Strong", description: "Strong vegetation activity" };
+    if (value >= 0.25) return { level: "Moderate", description: "Moderate vegetation activity" };
+    return { level: "Low", description: "Low vegetation activity" };
+  }
+
+  if (index === "NDWI") {
+    if (value >= 0.25) return { level: "Strong", description: "Strong water-related signal" };
+    if (value >= 0.05) return { level: "Moderate", description: "Moderate water-related signal" };
+    return { level: "Low", description: "Limited water-related signal" };
+  }
+
+  if (value >= 0.25) return { level: "Strong", description: "Strong built-up surface signal" };
+  if (value >= 0.05) return { level: "Moderate", description: "Moderate built-up surface signal" };
+  return { level: "Low", description: "Limited built-up surface signal" };
+}
+
 
 /* =============================================================
    ANALYSIS QUALITY PANEL
