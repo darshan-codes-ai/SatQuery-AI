@@ -20,9 +20,7 @@ type Stats = {
   sampleCount?: number | string;
   noDataCount?: number | string;
 };
-
 type OutputStats = { bands?: { B0?: { stats?: Stats } } };
-
 type StatisticsRow = {
   interval?: { from?: string; to?: string };
   outputs?: {
@@ -31,18 +29,14 @@ type StatisticsRow = {
     ndbi?: OutputStats;
   };
 };
-
 type StatisticsResponse = {
   data?: StatisticsRow[];
   geometryPixelCount?: number | string;
 };
 
-const AUTH_URL =
-  "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
-const CATALOG_URL =
-  "https://services.sentinel-hub.com/api/v1/catalog/1.0.0/search";
-const STATISTICS_URL =
-  "https://services.sentinel-hub.com/api/v1/statistics";
+const AUTH_URL = "https://services.sentinel-hub.com/auth/realms/main/protocol/openid-connect/token";
+const CATALOG_URL = "https://services.sentinel-hub.com/api/v1/catalog/1.0.0/search";
+const STATISTICS_URL = "https://services.sentinel-hub.com/api/v1/statistics";
 
 function toNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
@@ -61,10 +55,8 @@ function isCoordPair(value: unknown): value is [number, number] {
     typeof value[1] === "number" &&
     Number.isFinite(value[0]) &&
     Number.isFinite(value[1]) &&
-    value[0] >= -180 &&
-    value[0] <= 180 &&
-    value[1] >= -90 &&
-    value[1] <= 90
+    value[0] >= -180 && value[0] <= 180 &&
+    value[1] >= -90 && value[1] <= 90
   );
 }
 
@@ -79,11 +71,14 @@ function normalizeGeometry(input: unknown): Geometry | null {
   if (value.type === "Polygon" && Array.isArray(value.coordinates)) {
     const rings = value.coordinates as unknown[];
     if (!Array.isArray(rings[0])) return null;
+
     const ring = (rings[0] as unknown[]).filter(isCoordPair);
     if (ring.length < 3) return null;
+
     const first = ring[0];
     const last = ring[ring.length - 1];
     const closed = first[0] === last[0] && first[1] === last[1];
+
     return {
       type: "Polygon",
       coordinates: [closed ? ring : [...ring, first]],
@@ -93,9 +88,23 @@ function normalizeGeometry(input: unknown): Geometry | null {
   return null;
 }
 
-function geometryForCatalog(geometry: Geometry) {
+// Sentinel Hub statistics works more reliably with an area geometry.
+// Point selections are therefore converted to a small, local polygon.
+function processingGeometry(geometry: Geometry): Geometry {
   if (geometry.type === "Polygon") return geometry;
-  return geometry;
+
+  const [lng, lat] = geometry.coordinates;
+  const size = 0.0025;
+  return {
+    type: "Polygon",
+    coordinates: [[
+      [lng - size, lat - size],
+      [lng + size, lat - size],
+      [lng + size, lat + size],
+      [lng - size, lat + size],
+      [lng - size, lat - size],
+    ]],
+  };
 }
 
 async function getAccessToken(): Promise<string> {
@@ -130,9 +139,11 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-function dayWindow(dateString: string, days = 15) {
+function dayWindow(dateString: string, days = 30) {
   const target = new Date(`${dateString}T12:00:00Z`);
-  if (Number.isNaN(target.getTime())) throw new Error(`Invalid date: ${dateString}`);
+  if (Number.isNaN(target.getTime())) {
+    throw new Error(`Invalid date: ${dateString}`);
+  }
 
   return {
     from: new Date(target.getTime() - days * 24 * 60 * 60 * 1000),
@@ -146,7 +157,7 @@ async function findCandidateScenes(
   geometry: Geometry,
   targetDate: string
 ): Promise<CatalogFeature[]> {
-  const { from, to, target } = dayWindow(targetDate, 30);
+  const { from, to, target } = dayWindow(targetDate);
 
   const response = await fetch(CATALOG_URL, {
     method: "POST",
@@ -156,16 +167,12 @@ async function findCandidateScenes(
       Accept: "application/geo+json",
     },
     body: JSON.stringify({
-      intersects: geometryForCatalog(geometry),
+      intersects: geometry,
       datetime: `${from.toISOString()}/${to.toISOString()}`,
       collections: ["sentinel-2-l2a"],
       limit: 50,
       fields: {
-        include: [
-          "id",
-          "properties.datetime",
-          "properties.eo:cloud_cover",
-        ],
+        include: ["id", "properties.datetime", "properties.eo:cloud_cover"],
       },
     }),
     cache: "no-store",
@@ -184,16 +191,9 @@ async function findCandidateScenes(
     const cloudB = toNumber(b.properties?.["eo:cloud_cover"], 100);
     const dateA = new Date(a.properties?.datetime ?? 0).getTime();
     const dateB = new Date(b.properties?.datetime ?? 0).getTime();
-
-    const diffA = Math.abs(dateA - target.getTime());
-    const diffB = Math.abs(dateB - target.getTime());
-
-    // Prefer scenes close to the requested date, while still
-    // allowing lower-cloud scenes to win when dates are similar.
-    const scoreA = diffA / (24 * 60 * 60 * 1000) * 0.5 + cloudA;
-    const scoreB = diffB / (24 * 60 * 60 * 1000) * 0.5 + cloudB;
-
-    return scoreA - scoreB;
+    const distanceA = Math.abs(dateA - target.getTime()) / 86400000;
+    const distanceB = Math.abs(dateB - target.getTime()) / 86400000;
+    return distanceA * 0.5 + cloudA - (distanceB * 0.5 + cloudB);
   });
 
   return features;
@@ -214,14 +214,9 @@ function setup() {
 }
 function evaluatePixel(sample) {
   const invalid =
-    sample.dataMask === 0 ||
-    sample.SCL === 0 ||
-    sample.SCL === 1 ||
-    sample.SCL === 3 ||
-    sample.SCL === 8 ||
-    sample.SCL === 9 ||
-    sample.SCL === 10 ||
-    sample.SCL === 11;
+    sample.dataMask === 0 || sample.SCL === 0 || sample.SCL === 1 ||
+    sample.SCL === 3 || sample.SCL === 8 || sample.SCL === 9 ||
+    sample.SCL === 10 || sample.SCL === 11;
 
   if (invalid) {
     return { ndvi: [0], ndwi: [0], ndbi: [0], dataMask: [0] };
@@ -262,15 +257,17 @@ async function getStatsForScene(
           crs: "http://www.opengis.net/def/crs/OGC/1.3/CRS84",
         },
       },
-      data: [
-        {
-          type: "sentinel-2-l2a",
-          dataFilter: {
-            maxCloudCoverage: 100,
-            mosaickingOrder: "leastCC",
+      data: [{
+        type: "sentinel-2-l2a",
+        dataFilter: {
+          timeRange: {
+            from: from.toISOString(),
+            to: to.toISOString(),
           },
+          maxCloudCoverage: 100,
+          mosaickingOrder: "leastCC",
         },
-      ],
+      }],
     },
     aggregation: {
       timeRange: {
@@ -316,16 +313,11 @@ function extractObservation(statistics: StatisticsResponse) {
     const ndwi = toNumber(ndwiStats?.mean, Number.NaN);
     const ndbi = toNumber(ndbiStats?.mean, Number.NaN);
 
-    if (
-      Number.isFinite(ndvi) &&
-      Number.isFinite(ndwi) &&
-      Number.isFinite(ndbi)
-    ) {
+    if (Number.isFinite(ndvi) && Number.isFinite(ndwi) && Number.isFinite(ndbi)) {
       return {
         ndvi,
         ndwi,
         ndbi,
-        row,
         sampleCount: toNumber(ndviStats?.sampleCount, 0),
         noDataCount: toNumber(ndviStats?.noDataCount, 0),
         geometryPixelCount: toNumber(statistics.geometryPixelCount, 0),
@@ -341,42 +333,29 @@ async function analyzeDate(
   geometry: Geometry,
   targetDate: string
 ) {
-  const { target } = dayWindow(targetDate, 30);
-  const scenes = await findCandidateScenes(
-    accessToken,
-    geometry,
-    targetDate
-  );
+  const { target } = dayWindow(targetDate);
+  const scenes = await findCandidateScenes(accessToken, geometry, targetDate);
 
-  if (scenes.length === 0) {
+  if (!scenes.length) {
     throw new Error(`No Sentinel-2 scene was found near ${targetDate}.`);
   }
 
-  // A catalog hit does not guarantee usable pixels. Try several
-  // candidate acquisitions until one returns valid statistics.
-  const candidatesToTry = scenes.slice(0, 12);
+  let lastError = "No valid statistics were returned.";
 
-  let lastError = "no valid statistics";
-
-  for (const scene of candidatesToTry) {
+  for (const scene of scenes.slice(0, 12)) {
     try {
-      console.log("Trying change-analysis scene:", {
+      console.log("Trying change-analysis scene", {
         targetDate,
         sceneId: scene.id,
         acquisitionDate: scene.properties?.datetime,
         cloudCoverage: scene.properties?.["eo:cloud_cover"],
       });
 
-      const statistics = await getStatsForScene(
-        accessToken,
-        geometry,
-        scene
-      );
-
+      const statistics = await getStatsForScene(accessToken, geometry, scene);
       const observation = extractObservation(statistics);
 
-      if (!observation) {
-        lastError = `scene ${scene.id ?? "unknown"} returned no valid statistics`;
+      if (!observation || observation.geometryPixelCount <= 0) {
+        lastError = `scene ${scene.id ?? "unknown"} returned no usable pixels`;
         continue;
       }
 
@@ -385,23 +364,12 @@ async function analyzeDate(
         targetDate,
         targetTimestamp: target.toISOString(),
         acquisitionDate: scene.properties?.datetime ?? null,
-        cloudCoverage: toNumber(
-          scene.properties?.["eo:cloud_cover"],
-          0
-        ),
+        cloudCoverage: toNumber(scene.properties?.["eo:cloud_cover"], 0),
         sceneId: scene.id ?? null,
       };
     } catch (error) {
-      lastError =
-        error instanceof Error
-          ? error.message
-          : "scene statistics request failed";
-
-      console.warn(
-        "Skipping unusable change-analysis scene:",
-        scene.id,
-        lastError
-      );
+      lastError = error instanceof Error ? error.message : "scene statistics request failed";
+      console.warn("Skipping change-analysis scene", scene.id, lastError);
     }
   }
 
@@ -411,8 +379,6 @@ async function analyzeDate(
 }
 
 function percentageChange(before: number, after: number): number {
-  // For index values close to zero, relative percentage change is unstable.
-  // Use a small floor to keep the UI bounded and interpretable.
   const denominator = Math.max(Math.abs(before), 0.05);
   return ((after - before) / denominator) * 100;
 }
@@ -425,31 +391,21 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const coordinates = body.coordinates as Coordinates | undefined;
-    const selection = body.selection as unknown;
     const beforeDate = body.beforeDate;
     const afterDate = body.afterDate;
+    const rawSelection = normalizeGeometry(body.selection);
 
-    if (
-      !coordinates ||
-      typeof coordinates.lat !== "number" ||
-      typeof coordinates.lng !== "number"
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Valid map coordinates are required." },
-        { status: 400 }
-      );
+    if (!coordinates || typeof coordinates.lat !== "number" || typeof coordinates.lng !== "number") {
+      return NextResponse.json({ success: false, error: "Valid map coordinates are required." }, { status: 400 });
     }
 
     if (
-      coordinates.lat < -90 ||
-      coordinates.lat > 90 ||
-      coordinates.lng < -180 ||
-      coordinates.lng > 180
+      !Number.isFinite(coordinates.lat) ||
+      !Number.isFinite(coordinates.lng) ||
+      coordinates.lat < -90 || coordinates.lat > 90 ||
+      coordinates.lng < -180 || coordinates.lng > 180
     ) {
-      return NextResponse.json(
-        { success: false, error: "Invalid latitude or longitude." },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Invalid latitude or longitude." }, { status: 400 });
     }
 
     if (
@@ -458,28 +414,18 @@ export async function POST(request: Request) {
       !/^\d{4}-\d{2}-\d{2}$/.test(beforeDate) ||
       !/^\d{4}-\d{2}-\d{2}$/.test(afterDate)
     ) {
-      return NextResponse.json(
-        { success: false, error: "Valid Before and After dates are required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Valid Before and After dates are required." }, { status: 400 });
     }
 
     if (beforeDate >= afterDate) {
-      return NextResponse.json(
-        { success: false, error: "Before date must be earlier than After date." },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Before date must be earlier than After date." }, { status: 400 });
     }
 
-    const geometry = normalizeGeometry(selection);
-
-    if (!geometry) {
-      return NextResponse.json(
-        { success: false, error: "A valid point or polygon selection is required." },
-        { status: 400 }
-      );
+    if (!rawSelection) {
+      return NextResponse.json({ success: false, error: "A valid point or polygon selection is required." }, { status: 400 });
     }
 
+    const geometry = processingGeometry(rawSelection);
     const accessToken = await getAccessToken();
 
     const [before, after] = await Promise.all([
@@ -498,24 +444,12 @@ export async function POST(request: Request) {
     const ndbiDelta = after.ndbi - before.ndbi;
 
     const findings: string[] = [];
-
-    if (ndviDelta < -0.05) {
-      findings.push("vegetation signal decreased");
-    } else if (ndviDelta > 0.05) {
-      findings.push("vegetation signal increased");
-    }
-
-    if (ndwiDelta > 0.05) {
-      findings.push("water signal increased");
-    } else if (ndwiDelta < -0.05) {
-      findings.push("water signal decreased");
-    }
-
-    if (ndbiDelta > 0.05) {
-      findings.push("built-up signal increased");
-    } else if (ndbiDelta < -0.05) {
-      findings.push("built-up signal decreased");
-    }
+    if (ndviDelta < -0.05) findings.push("vegetation signal decreased");
+    else if (ndviDelta > 0.05) findings.push("vegetation signal increased");
+    if (ndwiDelta > 0.05) findings.push("water signal increased");
+    else if (ndwiDelta < -0.05) findings.push("water signal decreased");
+    if (ndbiDelta > 0.05) findings.push("built-up signal increased");
+    else if (ndbiDelta < -0.05) findings.push("built-up signal decreased");
 
     const summary = findings.length
       ? `Between ${beforeDate} and ${afterDate}, the selected area shows that ${findings.join(", ")}. These are spectral-index changes and should be interpreted with the imagery and acquisition conditions.`
@@ -523,26 +457,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      before: {
-        ndvi: safeRounded(before.ndvi),
-        ndwi: safeRounded(before.ndwi),
-        ndbi: safeRounded(before.ndbi),
-      },
-      after: {
-        ndvi: safeRounded(after.ndvi),
-        ndwi: safeRounded(after.ndwi),
-        ndbi: safeRounded(after.ndbi),
-      },
-      change: {
-        ndvi: safeRounded(change.ndvi, 1),
-        ndwi: safeRounded(change.ndwi, 1),
-        ndbi: safeRounded(change.ndbi, 1),
-      },
-      deltas: {
-        ndvi: safeRounded(ndviDelta),
-        ndwi: safeRounded(ndwiDelta),
-        ndbi: safeRounded(ndbiDelta),
-      },
+      before: { ndvi: safeRounded(before.ndvi), ndwi: safeRounded(before.ndwi), ndbi: safeRounded(before.ndbi) },
+      after: { ndvi: safeRounded(after.ndvi), ndwi: safeRounded(after.ndwi), ndbi: safeRounded(after.ndbi) },
+      change: { ndvi: safeRounded(change.ndvi, 1), ndwi: safeRounded(change.ndwi, 1), ndbi: safeRounded(change.ndbi, 1) },
+      deltas: { ndvi: safeRounded(ndviDelta), ndwi: safeRounded(ndwiDelta), ndbi: safeRounded(ndbiDelta) },
       beforeDate,
       afterDate,
       beforeAcquisitionDate: before.acquisitionDate,
@@ -552,20 +470,12 @@ export async function POST(request: Request) {
       beforeSceneId: before.sceneId,
       afterSceneId: after.sceneId,
       summary,
-      note:
-        "The selected dates are target dates. Sentinel-2 observations may be acquired on nearby dates because satellite revisit dates are not guaranteed to match the requested calendar date exactly. Percentage change is stabilized for index values near zero.",
+      note: "Target dates may resolve to nearby Sentinel-2 acquisition dates. Change values are spectral-index differences and should be interpreted together with the satellite evidence and cloud conditions.",
     });
   } catch (error) {
     console.error("SatQuery change analysis error:", error);
-
     return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Change analysis failed.",
-      },
+      { success: false, error: error instanceof Error ? error.message : "Change analysis failed." },
       { status: 500 }
     );
   }
