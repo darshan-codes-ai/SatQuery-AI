@@ -788,7 +788,7 @@ export default function AnalyzePage() {
                 icon={<Eye size={17} />}
                 title="Coverage"
                 value={`${analysisResults.coverage.toFixed(1)}%`}
-                subtitle="Vegetated area"
+                subtitle="Valid satellite coverage"
               />
 
             </div>
