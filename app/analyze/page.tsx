@@ -1193,7 +1193,7 @@ export default function AnalyzePage() {
                   <span className="text-xs font-semibold">
                     ANALYSIS EVIDENCE
                   </span>
-
+              
                 </div>
 
 
@@ -1453,6 +1453,15 @@ export default function AnalyzePage() {
                     </div>
                   )}
                 </div>
+
+                {/* =========================================================
+                    ANALYSIS QUALITY
+                ========================================================= */}
+
+                <AnalysisQualityPanel
+                  confidence={analysisResults.confidence}
+                  coverage={analysisResults.coverage}
+                />
 
               </div>
 
@@ -1891,3 +1900,129 @@ function UploadInfo({
 
   );
 }
+
+/* =============================================================
+   ANALYSIS QUALITY PANEL
+============================================================= */
+
+function AnalysisQualityPanel({
+  confidence,
+  coverage,
+}: {
+  confidence: number;
+  coverage: number;
+}) {
+  const confidencePercent = Math.round(
+    Math.max(0, Math.min(1, confidence)) * 100
+  );
+
+  const confidenceLabel =
+    confidencePercent >= 80
+      ? "HIGH"
+      : confidencePercent >= 55
+        ? "MODERATE"
+        : "LOW";
+
+  const confidenceColor =
+    confidencePercent >= 80
+      ? "text-emerald-400"
+      : confidencePercent >= 55
+        ? "text-yellow-300"
+        : "text-red-400";
+
+  const confidenceBar =
+    confidencePercent >= 80
+      ? "bg-emerald-400"
+      : confidencePercent >= 55
+        ? "bg-yellow-300"
+        : "bg-red-400";
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-gray-500">
+            Analysis Quality
+          </div>
+
+          <div className="text-[9px] text-gray-600 mt-1">
+            Reliability indicators for the current satellite analysis.
+          </div>
+        </div>
+
+        <div className={`text-[10px] font-bold ${confidenceColor}`}>
+          {confidenceLabel}
+        </div>
+      </div>
+
+      {/* Confidence */}
+      <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-gray-500">
+            Analysis confidence
+          </span>
+
+          <span className={`text-sm font-bold ${confidenceColor}`}>
+            {confidencePercent}%
+          </span>
+        </div>
+
+        <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className={`h-full rounded-full ${confidenceBar} transition-all duration-500`}
+            style={{
+              width: `${confidencePercent}%`,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Coverage */}
+      <div className="grid grid-cols-2 gap-2 mt-3">
+        <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+          <div className="text-[9px] text-gray-500">
+            Valid satellite coverage
+          </div>
+
+          <div className="text-lg font-bold mt-1">
+            {Number(coverage).toFixed(1)}%
+          </div>
+
+          <div className="text-[9px] text-gray-600 mt-1">
+            Usable satellite pixels
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+          <div className="text-[9px] text-gray-500">
+            Data quality
+          </div>
+
+          <div className={`text-lg font-bold mt-1 ${confidenceColor}`}>
+            {confidenceLabel}
+          </div>
+
+          <div className="text-[9px] text-gray-600 mt-1">
+            Based on available analysis data
+          </div>
+        </div>
+      </div>
+
+      {/* Interpretation */}
+      <div className="mt-3 rounded-xl border border-cyan-400/10 bg-cyan-400/[0.03] p-3">
+        <div className="text-[9px] uppercase tracking-widest text-cyan-400/70">
+          Quality Interpretation
+        </div>
+
+        <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
+          {confidencePercent >= 80
+            ? "The analysis has strong usable satellite coverage and high confidence in the reported indicators."
+            : confidencePercent >= 55
+              ? "The analysis is usable, but some missing pixels or observation conditions may reduce certainty."
+              : "The analysis should be interpreted cautiously because data quality or usable coverage is limited."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
