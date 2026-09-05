@@ -151,12 +151,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
           { id: LABELS_LAYER, type: "raster", source: "englishLabels", paint: { "raster-opacity": 1, "raster-fade-duration": 0 } },
         ],
       },
-      center: [0, 20],
-      zoom: 1.1,
-      minZoom: 0.8,
-      maxZoom: 19,
-      projection: "mercator",
-      renderWorldCopies: true,
+      center: [0, 20], zoom: 1.1, minZoom: 0.8, maxZoom: 19, projection: "mercator", renderWorldCopies: true,
     });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -238,7 +233,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     const existing = map.getSource(sourceId) as maplibregl.ImageSource | undefined;
     if (existing) { existing.updateImage({ url: changeHeatmapUrl, coordinates: changeHeatmapBounds }); return; }
     map.addSource(sourceId, { type: "image", url: changeHeatmapUrl, coordinates: changeHeatmapBounds });
-    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 0.82, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_LINE) ? SELECTION_LINE : undefined);
+    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 0.66, "raster-contrast": 0.12, "raster-saturation": -0.15, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_LINE) ? SELECTION_LINE : undefined);
   }, [changeHeatmapUrl, changeHeatmapBounds]);
 
   useEffect(() => {
@@ -247,7 +242,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     const existing = map.getSource(SPECTRAL_SOURCE) as maplibregl.ImageSource | undefined;
     if (existing) { existing.updateImage({ url: spectralUrl, coordinates: spectralBounds }); return; }
     map.addSource(SPECTRAL_SOURCE, { type: "image", url: spectralUrl, coordinates: spectralBounds });
-    map.addLayer({ id: SPECTRAL_LAYER, type: "raster", source: SPECTRAL_SOURCE, paint: { "raster-opacity": spectralIndex === "rgb" ? 0.9 : 0.75, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
+    map.addLayer({ id: SPECTRAL_LAYER, type: "raster", source: SPECTRAL_SOURCE, paint: { "raster-opacity": spectralIndex === "rgb" ? 0.9 : 0.72, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
   }, [spectralUrl, spectralBounds, evidenceUrl, spectralIndex]);
 
   const handleSearch = async (event?: FormEvent) => {
