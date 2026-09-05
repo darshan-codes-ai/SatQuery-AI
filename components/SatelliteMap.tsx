@@ -110,7 +110,6 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     if (!map || !mapLoadedRef.current) return;
     if (map.getLayer(BASEMAP_LAYER)) map.setLayoutProperty(BASEMAP_LAYER, "visibility", baseMapMode === "satellite" ? "visible" : "none");
     if (map.getLayer("osm-base")) map.setLayoutProperty("osm-base", "visibility", baseMapMode === "street" ? "visible" : "none");
-    // Keep English place/boundary labels visible in both base-map modes.
     if (map.getLayer(LABELS_LAYER)) map.setLayoutProperty(LABELS_LAYER, "visibility", "visible");
   }, [baseMapMode]);
 
@@ -139,7 +138,6 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
           },
           englishLabels: {
             type: "raster",
-            // Esri reference layer designed specifically to overlay imagery.
             tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
             tileSize: 256,
             minzoom: 0,
@@ -150,7 +148,6 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
         layers: [
           { id: BASEMAP_LAYER, type: "raster", source: "imagery" },
           { id: "osm-base", type: "raster", source: "osm", layout: { visibility: "none" } },
-          // Reference layer sits above satellite imagery so names/boundaries stay readable.
           { id: LABELS_LAYER, type: "raster", source: "englishLabels", paint: { "raster-opacity": 1, "raster-fade-duration": 0 } },
         ],
       },
@@ -231,7 +228,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     const existing = map.getSource(sourceId) as maplibregl.ImageSource | undefined;
     if (existing) { existing.updateImage({ url: evidenceUrl, coordinates: evidenceBounds }); return; }
     map.addSource(sourceId, { type: "image", url: evidenceUrl, coordinates: evidenceBounds });
-    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 0.72, "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
+    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 0.7, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
   }, [evidenceUrl, evidenceBounds]);
 
   useEffect(() => {
@@ -241,7 +238,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     const existing = map.getSource(sourceId) as maplibregl.ImageSource | undefined;
     if (existing) { existing.updateImage({ url: changeHeatmapUrl, coordinates: changeHeatmapBounds }); return; }
     map.addSource(sourceId, { type: "image", url: changeHeatmapUrl, coordinates: changeHeatmapBounds });
-    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 1, "raster-resampling": "nearest", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_LINE) ? SELECTION_LINE : undefined);
+    map.addLayer({ id: layerId, type: "raster", source: sourceId, paint: { "raster-opacity": 0.82, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_LINE) ? SELECTION_LINE : undefined);
   }, [changeHeatmapUrl, changeHeatmapBounds]);
 
   useEffect(() => {
@@ -250,7 +247,7 @@ export default function SatelliteMap({ onCoordinatesChange, onSelectionChange, e
     const existing = map.getSource(SPECTRAL_SOURCE) as maplibregl.ImageSource | undefined;
     if (existing) { existing.updateImage({ url: spectralUrl, coordinates: spectralBounds }); return; }
     map.addSource(SPECTRAL_SOURCE, { type: "image", url: spectralUrl, coordinates: spectralBounds });
-    map.addLayer({ id: SPECTRAL_LAYER, type: "raster", source: SPECTRAL_SOURCE, paint: { "raster-opacity": spectralIndex === "rgb" ? 0.9 : 0.78, "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
+    map.addLayer({ id: SPECTRAL_LAYER, type: "raster", source: SPECTRAL_SOURCE, paint: { "raster-opacity": spectralIndex === "rgb" ? 0.9 : 0.75, "raster-resampling": "linear", "raster-fade-duration": 0 } }, map.getLayer(SELECTION_FILL) ? SELECTION_FILL : undefined);
   }, [spectralUrl, spectralBounds, evidenceUrl, spectralIndex]);
 
   const handleSearch = async (event?: FormEvent) => {
